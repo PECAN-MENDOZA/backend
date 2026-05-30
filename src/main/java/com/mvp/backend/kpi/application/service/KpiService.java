@@ -83,11 +83,11 @@ public class KpiService {
 
     private AcceptanceRateResponse acceptanceRate(UUID studentId, YearMonth month) {
         MonthRange range = range(month);
-        Object[] result = sessionRepository.acceptanceSummary(studentId, range.start(), range.end());
-        long total = number(result[0]);
-        long accepted = number(result[1]);
-        long rejected = number(result[2]);
-        long unanswered = number(result[3]);
+        var result = sessionRepository.acceptanceSummary(studentId, range.start(), range.end());
+        long total = number(result.getTotalSessions());
+        long accepted = number(result.getAcceptedSessions());
+        long rejected = number(result.getRejectedSessions());
+        long unanswered = number(result.getUnansweredSessions());
         return new AcceptanceRateResponse(
                 studentId,
                 month.toString(),

@@ -14,19 +14,32 @@ import com.mvp.backend.correction.domain.model.CorrectionSession;
 
 public interface CorrectionSessionRepository extends JpaRepository<CorrectionSession, UUID> {
 
+    interface AcceptanceSummaryProjection {
+        Long getTotalSessions();
+
+        Long getAcceptedSessions();
+
+        Long getRejectedSessions();
+
+        Long getUnansweredSessions();
+    }
+
     Optional<CorrectionSession> findByIdAndStudentId(UUID id, UUID studentId);
 
     Page<CorrectionSession> findByStudentIdOrderByCreatedAtDesc(UUID studentId, Pageable pageable);
 
     @Query("""
-            select count(session),
-                   sum(case when session.acceptedCorrection = true then 1 else 0 end),
-                   sum(case when session.acceptedCorrection = false then 1 else 0 end),
-                   sum(case when session.acceptedCorrection is null then 1 else 0 end)
+            select count(session) as totalSessions,
+                   sum(case when session.acceptedCorrection = true then 1 else 0 end) as acceptedSessions,
+                   sum(case when session.acceptedCorrection = false then 1 else 0 end) as rejectedSessions,
+                   sum(case when session.acceptedCorrection is null then 1 else 0 end) as unansweredSessions
             from CorrectionSession session
             where session.student.id = :studentId
               and session.createdAt >= :start
               and session.createdAt < :end
             """)
-    Object[] acceptanceSummary(@Param("studentId") UUID studentId, @Param("start") Instant start, @Param("end") Instant end);
+    AcceptanceSummaryProjection acceptanceSummary(
+            @Param("studentId") UUID studentId,
+            @Param("start") Instant start,
+            @Param("end") Instant end);
 }

@@ -1,0 +1,89 @@
+package com.mvp.backend.correction.domain.model;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import com.mvp.backend.student.domain.model.Student;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Table(name = "correction_sessions")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class CorrectionSession {
+
+    @Id
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "student_id", nullable = false)
+    private Student student;
+
+    @Column(name = "original_text", nullable = false, columnDefinition = "TEXT")
+    private String originalText;
+
+    @Column(name = "corrected_text", columnDefinition = "TEXT")
+    private String correctedText;
+
+    @Column(name = "corrections_count", nullable = false)
+    private int correctionsCount;
+
+    @Column(name = "suggestions_json", columnDefinition = "TEXT")
+    private String suggestionsJson;
+
+    private Double confidence;
+
+    @Column(name = "selected_suggestion", columnDefinition = "TEXT")
+    private String selectedSuggestion;
+
+    @Column(name = "accepted_correction")
+    private Boolean acceptedCorrection;
+
+    @Column(name = "response_time_ms")
+    private Long responseTimeMs;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    public CorrectionSession(Student student, String originalText) {
+        this.id = UUID.randomUUID();
+        this.student = student;
+        this.originalText = originalText;
+    }
+
+    @PrePersist
+    void onCreate() {
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
+    }
+
+    public void complete(
+            String correctedText,
+            int correctionsCount,
+            String suggestionsJson,
+            Double confidence,
+            Long responseTimeMs) {
+        this.correctedText = correctedText;
+        this.correctionsCount = correctionsCount;
+        this.suggestionsJson = suggestionsJson;
+        this.confidence = confidence;
+        this.responseTimeMs = responseTimeMs;
+    }
+
+    public void registerFeedback(String selectedSuggestion, boolean acceptedCorrection) {
+        this.selectedSuggestion = selectedSuggestion;
+        this.acceptedCorrection = acceptedCorrection;
+    }
+}

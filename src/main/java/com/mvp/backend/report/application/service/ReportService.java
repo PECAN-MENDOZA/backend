@@ -19,6 +19,7 @@ import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.service.KpiService;
 import com.mvp.backend.report.application.dto.ReportAvailabilityResponse;
+import com.mvp.backend.report.application.dto.ReportPdfDocument;
 import com.mvp.backend.report.application.dto.ReportPdfDownload;
 import com.mvp.backend.report.domain.model.MonthlyReport;
 import com.mvp.backend.report.domain.repository.MonthlyReportRepository;
@@ -87,66 +88,55 @@ public class ReportService {
 
         Instant generatedAt = snapshot.map(MonthlyReport::getGeneratedAt).orElseGet(Instant::now);
         String filename = filename(summary.name(), parsedMonth);
-        byte[] content = pdfGenerator.generate(linesForPdf(link, teacher, summary, generatedAt));
+        byte[] content = pdfGenerator.generate(buildPdfDocument(link, teacher, summary, generatedAt, snapshot.isPresent()));
         return new ReportPdfDownload(filename, content);
     }
 
-    private List<String> linesForPdf(
+    private ReportPdfDocument buildPdfDocument(
             TeacherStudentLink link,
             Teacher teacher,
             KpiSummaryResponse summary,
-            Instant generatedAt) {
-        List<String> lines = new ArrayList<>();
+            Instant generatedAt,
+            boolean historicalSnapshot) {
         AcceptanceRateResponse acceptance = summary.acceptanceRate();
-
-        lines.add("Reporte mensual consolidado");
-        lines.add("");
-        lines.add("Estudiante: " + summary.name());
-        lines.add("Alias: " + link.getStudent().getUsername());
-        lines.add("Docente: " + teacher.getUsername());
-        lines.add("Mes del reporte: " + monthLabel(summary.month()));
-        lines.add("Fuente de datos: " + (acceptance.totalSubmissions() > 0 ? "KPI consolidado" : "Sin envios en el mes"));
-        lines.add("Fecha de generacion: " + generatedAt);
-        lines.add("");
-        lines.add("Tasa de aceptacion: " + acceptance.acceptanceRatePercentage() + "%");
-        lines.add("Sugerencias aceptadas: " + acceptance.totalAccepted());
-        lines.add("Sugerencias rechazadas: " + acceptance.totalRejected());
-        lines.add("Sin respuesta: " + acceptance.unanswered());
-        lines.add("Total de envios: " + acceptance.totalSubmissions());
-        lines.add("");
-        lines.add("Distribucion de errores por tipo");
-        appendDistribution(lines, summary.errorsByType());
-        lines.add("");
-        lines.add("Palabras recurrentes");
-        appendTopWords(lines, summary.topWords());
-        lines.add("");
-        lines.add("Notas docentes");
-        lines.add(link.getNotes() == null || link.getNotes().isBlank() ? "Sin notas disponibles." : link.getNotes());
-        return lines;
+        return new ReportPdfDocument(
+                "Reporte mensual consolidado",
+                summary.name(),
+                link.getStudent().getUsername(),
+                teacher.getUsername(),
+                monthLabel(summary.month()),
+                summary.month(),
+                historicalSnapshot ? "Snapshot historico cerrado" : "Resumen KPI en tiempo real",
+                generatedAt,
+                acceptance.acceptanceRatePercentage(),
+                acceptance.totalSubmissions(),
+                acceptance.totalAccepted(),
+                acceptance.totalRejected(),
+                acceptance.unanswered(),
+                buildDistribution(summary.errorsByType()),
+                buildTopWords(summary.topWords()),
+                link.getNotes() == null || link.getNotes().isBlank() ? "Sin notas disponibles." : link.getNotes());
     }
 
-    private void appendDistribution(List<String> lines, List<ErrorDistributionItem> items) {
-        if (items.isEmpty()) {
-            lines.add("No hay errores registrados en el periodo.");
-            return;
-        }
+    private List<ReportPdfDocument.ErrorEntry> buildDistribution(List<ErrorDistributionItem> items) {
+        List<ReportPdfDocument.ErrorEntry> distribution = new ArrayList<>();
         for (ErrorDistributionItem item : items) {
-            lines.add("- " + item.type() + ": " + item.count() + " (" + item.percentage() + "%)");
+            distribution.add(new ReportPdfDocument.ErrorEntry(item.type().toValue(), item.count(), item.percentage()));
         }
+        return distribution;
     }
 
-    private void appendTopWords(List<String> lines, List<TopWordItem> items) {
-        if (items.isEmpty()) {
-            lines.add("No hay palabras recurrentes para este mes.");
-            return;
-        }
+    private List<ReportPdfDocument.TopWordEntry> buildTopWords(List<TopWordItem> items) {
+        List<ReportPdfDocument.TopWordEntry> words = new ArrayList<>();
         for (TopWordItem item : items) {
-            lines.add("- " + item.originalWord()
-                    + " | tipo: " + item.mostCommonType()
-                    + " | frecuencia: " + item.frequency()
-                    + " | confianza: " + item.averageConfidence()
-                    + " | aceptadas: " + item.acceptedCorrectionCount());
+            words.add(new ReportPdfDocument.TopWordEntry(
+                    item.originalWord(),
+                    item.mostCommonType().toValue(),
+                    item.frequency(),
+                    item.averageConfidence(),
+                    item.acceptedCorrectionCount()));
         }
+        return words;
     }
 
     private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {

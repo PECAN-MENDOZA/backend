@@ -21,6 +21,7 @@ import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.service.KpiService;
+import com.mvp.backend.report.application.dto.ReportPdfDocument;
 import com.mvp.backend.report.domain.model.MonthlyReport;
 import com.mvp.backend.report.domain.repository.MonthlyReportRepository;
 import com.mvp.backend.report.infrastructure.pdf.SimplePdfGenerator;
@@ -136,7 +137,7 @@ class ReportServiceTests {
         when(monthlyReportRepository.findByStudentIdAndMonth(studentId, LocalDate.of(2026, 5, 1)))
                 .thenReturn(Optional.empty());
         when(teacherRepository.findById(teacherId)).thenReturn(Optional.of(teacher));
-        when(pdfGenerator.generate(org.mockito.ArgumentMatchers.anyList())).thenReturn(pdfBytes);
+        when(pdfGenerator.generate(org.mockito.ArgumentMatchers.any(ReportPdfDocument.class))).thenReturn(pdfBytes);
 
         var response = reportService.downloadPdf(teacherId, studentId, "2026-05");
 

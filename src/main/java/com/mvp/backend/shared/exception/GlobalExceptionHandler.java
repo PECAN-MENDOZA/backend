@@ -40,6 +40,11 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_GATEWAY, exception.getMessage(), request, Map.of());
     }
 
+    @ExceptionHandler(PdfGenerationException.class)
+    ResponseEntity<ApiError> handlePdfGeneration(PdfGenerationException exception, HttpServletRequest request) {
+        return error(HttpStatus.INTERNAL_SERVER_ERROR, exception.getMessage(), request, Map.of());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException exception, HttpServletRequest request) {
         Map<String, String> validationErrors = new LinkedHashMap<>();

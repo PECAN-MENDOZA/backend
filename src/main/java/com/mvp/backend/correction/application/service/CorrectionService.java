@@ -1,5 +1,6 @@
 package com.mvp.backend.correction.application.service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,12 +23,14 @@ import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.shared.dto.PagedResponse;
 import com.mvp.backend.shared.exception.AiServiceException;
+import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 
 @Service
 public class CorrectionService {
 
+    private static final int MAX_SUGGESTIONS = 3;
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
 
@@ -59,7 +62,7 @@ public class CorrectionService {
         if (aiResponse == null) {
             throw new AiServiceException("AI correction service returned an empty response", null);
         }
-        List<String> suggestions = aiResponse.suggestions() == null ? List.of() : aiResponse.suggestions();
+        List<String> suggestions = normalizeSuggestions(aiResponse.correctedText(), aiResponse.suggestions());
         session.complete(
                 aiResponse.correctedText(),
                 aiResponse.correctionsCount(),
@@ -85,7 +88,8 @@ public class CorrectionService {
     @Transactional
     public CorrectionSessionResponse registerFeedback(UUID studentId, UUID sessionId, CorrectionFeedbackRequest request) {
         var session = findOwnedSession(studentId, sessionId);
-        session.registerFeedback(request.selectedSuggestion(), request.acceptedCorrection());
+        String selectedSuggestion = validateSelectedSuggestion(session, request);
+        session.registerFeedback(selectedSuggestion, request.acceptedCorrection());
         return toResponse(session, wordCorrectionRepository.findByCorrectionSessionIdOrderByStartPosition(sessionId));
     }
 
@@ -110,10 +114,51 @@ public class CorrectionService {
     }
 
     private CorrectionSessionResponse toResponse(CorrectionSession session, List<WordCorrection> corrections) {
+        List<String> suggestions = normalizeSuggestions(session.getCorrectedText(), readSuggestions(session.getSuggestionsJson()));
         return CorrectionSessionResponse.from(
                 session,
-                readSuggestions(session.getSuggestionsJson()),
+                suggestions,
                 corrections.stream().map(WordCorrectionResponse::from).toList());
+    }
+
+    private String validateSelectedSuggestion(CorrectionSession session, CorrectionFeedbackRequest request) {
+        String selectedSuggestion = emptyToNull(request.selectedSuggestion());
+        if (request.acceptedCorrection() && selectedSuggestion == null) {
+            throw new BusinessException("Accepted correction requires a selected suggestion");
+        }
+        if (selectedSuggestion == null) {
+            return null;
+        }
+        List<String> suggestions = normalizeSuggestions(session.getCorrectedText(), readSuggestions(session.getSuggestionsJson()));
+        if (!suggestions.contains(selectedSuggestion)) {
+            throw new BusinessException("Selected suggestion was not offered for this correction session");
+        }
+        return selectedSuggestion;
+    }
+
+    private List<String> normalizeSuggestions(String correctedText, List<String> suggestions) {
+        var uniqueSuggestions = new LinkedHashMap<String, String>();
+        addSuggestion(uniqueSuggestions, correctedText);
+        if (suggestions != null) {
+            suggestions.forEach(suggestion -> addSuggestion(uniqueSuggestions, suggestion));
+        }
+        return uniqueSuggestions.values().stream()
+                .limit(MAX_SUGGESTIONS)
+                .toList();
+    }
+
+    private void addSuggestion(LinkedHashMap<String, String> suggestions, String suggestion) {
+        String candidate = emptyToNull(suggestion);
+        if (candidate != null) {
+            suggestions.putIfAbsent(candidate.strip(), candidate);
+        }
+    }
+
+    private String emptyToNull(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        return text;
     }
 
     private String writeSuggestions(List<String> suggestions) {

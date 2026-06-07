@@ -13,12 +13,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.mvp.backend.correction.domain.model.ErrorType;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
-import com.mvp.backend.kpi.application.dto.ErrorDistributionItem;
-import com.mvp.backend.kpi.application.dto.ErrorDistributionResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
@@ -54,12 +51,6 @@ public class KpiService {
     }
 
     @Transactional
-    public ErrorDistributionResponse errorDistribution(UUID teacherId, UUID studentId, String month) {
-        requireLink(teacherId, studentId);
-        return errorDistribution(studentId, parseMonth(month));
-    }
-
-    @Transactional
     public TopWordsResponse topWords(UUID teacherId, UUID studentId, String month) {
         requireLink(teacherId, studentId);
         return topWords(studentId, parseMonth(month));
@@ -70,14 +61,12 @@ public class KpiService {
         TeacherStudentLink link = requireLink(teacherId, studentId);
         YearMonth parsedMonth = parseMonth(month);
         var acceptanceRate = acceptanceRate(studentId, parsedMonth);
-        var distribution = errorDistribution(studentId, parsedMonth);
         var topWords = topWords(studentId, parsedMonth);
         return new KpiSummaryResponse(
                 studentId,
                 personalDataCipher.decrypt(link.getEncryptedStudentRealName()),
                 parsedMonth.toString(),
                 acceptanceRate,
-                distribution.distribution(),
                 topWords.topWords());
     }
 
@@ -98,19 +87,6 @@ public class KpiService {
                 percentage(accepted, total));
     }
 
-    private ErrorDistributionResponse errorDistribution(UUID studentId, YearMonth month) {
-        MonthRange range = range(month);
-        List<Object[]> rows = wordCorrectionRepository.errorDistribution(studentId, range.start(), range.end());
-        long total = rows.stream().mapToLong(row -> number(row[1])).sum();
-        List<ErrorDistributionItem> distribution = rows.stream()
-                .map(row -> new ErrorDistributionItem(
-                        (ErrorType) row[0],
-                        number(row[1]),
-                        percentage(number(row[1]), total)))
-                .toList();
-        return new ErrorDistributionResponse(studentId, month.toString(), total, distribution);
-    }
-
     private TopWordsResponse topWords(UUID studentId, YearMonth month) {
         MonthRange range = range(month);
         List<TopWordItem> words = wordCorrectionRepository
@@ -118,10 +94,8 @@ public class KpiService {
                 .stream()
                 .map(row -> new TopWordItem(
                         (String) row[0],
-                        (ErrorType) row[1],
-                        number(row[2]),
-                        round(((Number) row[3]).doubleValue()),
-                        number(row[4])))
+                        number(row[1]),
+                        number(row[2])))
                 .toList();
         return new TopWordsResponse(studentId, month.toString(), words);
     }

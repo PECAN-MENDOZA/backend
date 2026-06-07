@@ -1,6 +1,7 @@
 package com.mvp.backend.config;
 
 import java.time.Duration;
+import java.util.List;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -9,5 +10,7 @@ public record AppSecurityProperties(
         String issuer,
         Duration tokenTtl,
         String jwtSecret,
-        String encryptionKeyBase64) {
+        String encryptionKeyBase64,
+        List<String> allowedOrigins,
+        boolean allowInsecureDefaults) {
 }

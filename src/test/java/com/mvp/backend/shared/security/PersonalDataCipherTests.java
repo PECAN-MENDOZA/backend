@@ -16,7 +16,9 @@ class PersonalDataCipherTests {
                 "test",
                 Duration.ofHours(5),
                 "test-secret-that-is-long-enough-for-hs256-signing",
-                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+                "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                java.util.List.of("*"),
+                true);
         var cipher = new PersonalDataCipher(properties);
 
         String encrypted = cipher.encrypt("Juan Perez");

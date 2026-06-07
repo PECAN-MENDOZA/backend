@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
-import com.mvp.backend.kpi.application.dto.ErrorDistributionItem;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.service.KpiService;
@@ -113,17 +112,8 @@ public class ReportService {
                 acceptance.totalAccepted(),
                 acceptance.totalRejected(),
                 acceptance.unanswered(),
-                buildDistribution(summary.errorsByType()),
                 buildTopWords(summary.topWords()),
                 link.getNotes() == null || link.getNotes().isBlank() ? "Sin notas disponibles." : link.getNotes());
-    }
-
-    private List<ReportPdfDocument.ErrorEntry> buildDistribution(List<ErrorDistributionItem> items) {
-        List<ReportPdfDocument.ErrorEntry> distribution = new ArrayList<>();
-        for (ErrorDistributionItem item : items) {
-            distribution.add(new ReportPdfDocument.ErrorEntry(item.type().toValue(), item.count(), item.percentage()));
-        }
-        return distribution;
     }
 
     private List<ReportPdfDocument.TopWordEntry> buildTopWords(List<TopWordItem> items) {
@@ -131,9 +121,7 @@ public class ReportService {
         for (TopWordItem item : items) {
             words.add(new ReportPdfDocument.TopWordEntry(
                     item.originalWord(),
-                    item.mostCommonType().toValue(),
                     item.frequency(),
-                    item.averageConfidence(),
                     item.acceptedCorrectionCount()));
         }
         return words;

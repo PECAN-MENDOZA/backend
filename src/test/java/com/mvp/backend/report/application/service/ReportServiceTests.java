@@ -164,7 +164,6 @@ class ReportServiceTests {
                 "2026-05",
                 new AcceptanceRateResponse(studentId, "2026-05", totalSubmissions, totalAccepted, totalRejected, unanswered,
                         totalSubmissions == 0 ? 0 : 78.57),
-                List.of(),
-                List.of(new TopWordItem("ermano", com.mvp.backend.correction.domain.model.ErrorType.SPELLING, 2, 0.95, 2)));
+                List.of(new TopWordItem("ermano", 2, 2)));
     }
 }

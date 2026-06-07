@@ -46,4 +46,8 @@ public class Student {
             createdAt = Instant.now();
         }
     }
+
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
 }

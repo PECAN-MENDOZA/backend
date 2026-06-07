@@ -69,9 +69,6 @@ public class SimplePdfGenerator {
             pdf.add(Chunk.NEWLINE);
             pdf.add(metricCards(document));
             pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Distribucion de errores"));
-            pdf.add(errorDistributionTable(document.errorDistribution()));
-            pdf.add(Chunk.NEWLINE);
             pdf.add(sectionTitle("Palabras recurrentes"));
             pdf.add(topWordsTable(document.topWords()));
             pdf.add(Chunk.NEWLINE);
@@ -130,45 +127,21 @@ public class SimplePdfGenerator {
         return paragraph;
     }
 
-    private PdfPTable errorDistributionTable(List<ReportPdfDocument.ErrorEntry> items) {
-        if (items.isEmpty()) {
-            return emptyState("No hay errores registrados para este periodo.");
-        }
-
-        PdfPTable table = new PdfPTable(new float[] {2.6f, 1.2f, 1.4f});
-        table.setWidthPercentage(100);
-        table.setHeaderRows(1);
-        table.addCell(headerCell("Tipo de error"));
-        table.addCell(headerCell("Cantidad"));
-        table.addCell(headerCell("Porcentaje"));
-
-        for (ReportPdfDocument.ErrorEntry item : items) {
-            table.addCell(bodyCell(capitalize(item.label()), false));
-            table.addCell(bodyCell(String.valueOf(item.count()), true));
-            table.addCell(bodyCell(formatPercentage(item.percentage()), true));
-        }
-        return table;
-    }
-
     private PdfPTable topWordsTable(List<ReportPdfDocument.TopWordEntry> items) {
         if (items.isEmpty()) {
             return emptyState("No hay palabras recurrentes para este mes.");
         }
 
-        PdfPTable table = new PdfPTable(new float[] {2.3f, 1.6f, 1.0f, 1.2f, 1.1f});
+        PdfPTable table = new PdfPTable(new float[] {2.6f, 1.2f, 1.2f});
         table.setWidthPercentage(100);
         table.setHeaderRows(1);
         table.addCell(headerCell("Palabra"));
-        table.addCell(headerCell("Tipo"));
         table.addCell(headerCell("Frecuencia"));
-        table.addCell(headerCell("Confianza"));
         table.addCell(headerCell("Aceptadas"));
 
         for (ReportPdfDocument.TopWordEntry item : items) {
             table.addCell(bodyCell(item.originalWord(), false));
-            table.addCell(bodyCell(capitalize(item.errorType()), false));
             table.addCell(bodyCell(String.valueOf(item.frequency()), true));
-            table.addCell(bodyCell(String.format(Locale.US, "%.2f", item.averageConfidence()), true));
             table.addCell(bodyCell(String.valueOf(item.acceptedCorrectionCount()), true));
         }
         return table;
@@ -255,17 +228,6 @@ public class SimplePdfGenerator {
         Paragraph paragraph = new Paragraph(text, BODY_FONT);
         paragraph.setLeading(14);
         return paragraph;
-    }
-
-    private String formatPercentage(double value) {
-        return String.format(Locale.US, "%.2f%%", value);
-    }
-
-    private String capitalize(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
     private static final class ReportPageEvent extends PdfPageEventHelper {

@@ -71,7 +71,11 @@ class AuthServiceTests {
         when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(true);
         when(tokenService.issue(teacher.getId(), UserRole.TEACHER))
-                .thenReturn(new AuthResponse(teacher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.TEACHER));
+                .thenReturn(new AuthResponse(
+                        teacher.getId(),
+                        "token",
+                        Instant.now().plusSeconds(3600),
+                        UserRole.TEACHER));
 
         AuthResponse response = authService.loginTeacher(new TeacherLoginRequest("teacher@upc.edu", "Password123"));
 

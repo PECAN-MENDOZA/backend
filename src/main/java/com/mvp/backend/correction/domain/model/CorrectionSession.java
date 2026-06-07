@@ -42,8 +42,6 @@ public class CorrectionSession {
     @Column(name = "suggestions_json", columnDefinition = "TEXT")
     private String suggestionsJson;
 
-    private Double confidence;
-
     @Column(name = "selected_suggestion", columnDefinition = "TEXT")
     private String selectedSuggestion;
 
@@ -73,17 +71,16 @@ public class CorrectionSession {
             String correctedText,
             int correctionsCount,
             String suggestionsJson,
-            Double confidence,
             Long responseTimeMs) {
         this.correctedText = correctedText;
         this.correctionsCount = correctionsCount;
         this.suggestionsJson = suggestionsJson;
-        this.confidence = confidence;
         this.responseTimeMs = responseTimeMs;
     }
 
-    public void registerFeedback(String selectedSuggestion, boolean acceptedCorrection) {
+    public void registerFeedback(String selectedSuggestion, boolean acceptedCorrection, int correctionsCount) {
         this.selectedSuggestion = selectedSuggestion;
         this.acceptedCorrection = acceptedCorrection;
+        this.correctionsCount = correctionsCount;
     }
 }

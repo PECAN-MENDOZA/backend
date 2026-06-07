@@ -26,6 +26,9 @@ AI_BASE_URL=http://localhost:5000
 AI_CORRECTION_PATH=/interno/corregir
 ```
 
+For production also set `CORS_ALLOWED_ORIGINS` to the Angular portal domain(s) (comma-separated) and
+`ALLOW_INSECURE_DEFAULTS=false` so the app refuses to start with the bundled development secrets.
+
 Then run:
 
 ```powershell
@@ -37,11 +40,11 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 ## Modules
 
 - `auth`: teacher registration, student and teacher login, JWT creation
-- `student`: teacher-managed pseudonymous student accounts and dynamic search
+- `student`: pseudonymous student profiles and student self-service
 - `teacher`: encrypted teacher-student links
 - `correction`: correction sessions, word details, feedback, and AI adapter
-- `kpi`: acceptance rate, errors by type, top words, and combined teacher dashboard
-- `consent`: privacy consent audit records
+- `kpi`: acceptance rate, top words, and combined teacher dashboard
+- `report`: monthly report availability and PDF generation
 - `shared`: reusable DTOs, security helpers, and global error handling
 - `config`: JWT, CORS, typed properties, and HTTP client configuration
 
@@ -52,12 +55,20 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 | `POST` | `/api/v1/auth/teachers/register` | Public |
 | `POST` | `/api/v1/auth/teachers/login` | Public |
 | `POST` | `/api/v1/auth/students/login` | Public |
-| `POST` | `/api/v1/students` | Teacher |
-| `POST` | `/api/v1/teachers/students` | Teacher |
+| `POST` | `/api/v1/teachers/students/accounts` | Teacher |
+| `GET` | `/api/v1/teachers/students` | Teacher |
+| `POST` | `/api/v1/teachers/students/{id}/reset-pin` | Teacher |
+| `GET` | `/api/v1/students/me` | Student |
 | `POST` | `/api/v1/corrections/process` | Student |
 | `PATCH` | `/api/v1/corrections/sessions/{id}/feedback` | Student |
 | `GET` | `/api/v1/kpis/students/{id}/summary?month=2026-05` | Teacher |
-| `POST` | `/api/v1/consents` | Authenticated |
+
+Teachers create students through `POST /api/v1/teachers/students/accounts`. The backend generates a kid-friendly
+alias (`palabra-NN`, e.g. `tigre-07`) and a 4-digit PIN, inherits the teacher institution, encrypts the real student
+name, and creates the teacher-student link in one transaction. The PIN is returned only by the creation response so the
+teacher can hand it to the student. There is no forced password change: the student logs in with the alias and PIN and
+uses the keyboard directly. If a student forgets the PIN, the teacher resets it via
+`POST /api/v1/teachers/students/{id}/reset-pin`, which returns a new PIN once.
 
 ## Verify
 
@@ -67,7 +78,7 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 
 ## Seed demo data
 
-To populate a local database with 1 teacher, 15 students, linked records, consents, monthly reports, and 2 weeks of correction sessions:
+To populate a local database with 1 teacher, 15 students, linked records, monthly reports, and 2 weeks of correction sessions:
 
 ```powershell
 .\scripts\seed-demo.ps1

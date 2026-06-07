@@ -31,18 +31,14 @@ class SimplePdfGeneratorTests {
                 3,
                 0,
                 List.of(
-                        new ReportPdfDocument.ErrorEntry("ortografico", 9, 56.25),
-                        new ReportPdfDocument.ErrorEntry("fonologico", 5, 31.25),
-                        new ReportPdfDocument.ErrorEntry("semantico", 2, 12.50)),
-                List.of(
-                        new ReportPdfDocument.TopWordEntry("ermano", "ortografico", 2, 0.95, 2),
-                        new ReportPdfDocument.TopWordEntry("zoolojico", "ortografico", 2, 0.97, 2)),
+                        new ReportPdfDocument.TopWordEntry("ermano", 2, 2),
+                        new ReportPdfDocument.TopWordEntry("zoolojico", 2, 2)),
                 "Seguimiento positivo durante el mes con buena aceptacion de sugerencias.");
 
         byte[] pdf = generator.generate(document);
 
         assertThat(pdf).isNotEmpty();
         assertThat(new String(pdf, 0, 8, StandardCharsets.ISO_8859_1)).startsWith("%PDF-1.");
-        assertThat(pdf.length).isGreaterThan(2500);
+        assertThat(pdf.length).isGreaterThan(1500);
     }
 }

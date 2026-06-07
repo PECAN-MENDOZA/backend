@@ -5,5 +5,9 @@ import java.util.UUID;
 
 import com.mvp.backend.auth.domain.model.UserRole;
 
-public record AuthResponse(UUID userId, String token, Instant expiresAt, UserRole role) {
+public record AuthResponse(
+        UUID userId,
+        String token,
+        Instant expiresAt,
+        UserRole role) {
 }

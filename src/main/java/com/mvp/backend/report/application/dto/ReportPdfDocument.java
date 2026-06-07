@@ -17,18 +17,12 @@ public record ReportPdfDocument(
         long totalAccepted,
         long totalRejected,
         long unanswered,
-        List<ErrorEntry> errorDistribution,
         List<TopWordEntry> topWords,
         String teacherNotes) {
 
-    public record ErrorEntry(String label, long count, double percentage) {
-    }
-
     public record TopWordEntry(
             String originalWord,
-            String errorType,
             long frequency,
-            double averageConfidence,
             long acceptedCorrectionCount) {
     }
 }

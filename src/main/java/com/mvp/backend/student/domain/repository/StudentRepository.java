@@ -4,11 +4,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-
 import com.mvp.backend.student.domain.model.Student;
 
-public interface StudentRepository extends JpaRepository<Student, UUID>, JpaSpecificationExecutor<Student> {
+public interface StudentRepository extends JpaRepository<Student, UUID> {
 
     Optional<Student> findByUsername(String username);
 

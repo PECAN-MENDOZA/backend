@@ -25,6 +25,7 @@ import com.mvp.backend.shared.dto.PagedResponse;
 import com.mvp.backend.shared.exception.AiServiceException;
 import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.NotFoundException;
+import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 
 @Service
@@ -55,46 +56,59 @@ public class CorrectionService {
 
     @Transactional
     public CorrectionSessionResponse process(UUID studentId, ProcessCorrectionRequest request) {
-        var student = studentRepository.findById(studentId)
-                .orElseThrow(() -> new NotFoundException("Student not found"));
+        var student = requireStudent(studentId);
         var session = sessionRepository.save(new CorrectionSession(student, request.originalText()));
-        var aiResponse = aiCorrectionClient.correct(request.originalText(), request.additionalContext());
+        var aiResponse = aiCorrectionClient.correct(request.originalText(), studentId);
         if (aiResponse == null) {
             throw new AiServiceException("AI correction service returned an empty response", null);
         }
         List<String> suggestions = normalizeSuggestions(aiResponse.correctedText(), aiResponse.suggestions());
+        // El detalle palabra por palabra ya no lo entrega la IA: se derivara por diff
+        // contra la sugerencia aceptada en registerFeedback (ver docs/arquitectura-integracion.md).
         session.complete(
                 aiResponse.correctedText(),
-                aiResponse.correctionsCount(),
+                0,
                 writeSuggestions(suggestions),
-                aiResponse.confidence(),
                 aiResponse.processingTimeMs());
-        List<WordCorrection> wordCorrections = aiResponse.correctedWords() == null
-                ? List.of()
-                : aiResponse.correctedWords().stream()
-                        .map(word -> new WordCorrection(
-                                session,
-                                word.originalWord(),
-                                word.correctedWord(),
-                                word.errorType(),
-                                word.confidence(),
-                                word.startPosition(),
-                                word.endPosition()))
-                        .toList();
-        wordCorrectionRepository.saveAll(wordCorrections);
-        return toResponse(session, wordCorrections);
+        return toResponse(session, List.of());
     }
 
     @Transactional
     public CorrectionSessionResponse registerFeedback(UUID studentId, UUID sessionId, CorrectionFeedbackRequest request) {
+        requireStudent(studentId);
         var session = findOwnedSession(studentId, sessionId);
         String selectedSuggestion = validateSelectedSuggestion(session, request);
-        session.registerFeedback(selectedSuggestion, request.acceptedCorrection());
-        return toResponse(session, wordCorrectionRepository.findByCorrectionSessionIdOrderByStartPosition(sessionId));
+        boolean accepted = request.acceptedCorrection();
+
+        // El feedback puede reenviarse: recalculamos siempre desde cero.
+        wordCorrectionRepository.deleteByCorrectionSessionId(sessionId);
+        List<WordCorrection> wordCorrections = accepted && selectedSuggestion != null
+                ? deriveWordCorrections(session, selectedSuggestion)
+                : List.of();
+        session.registerFeedback(selectedSuggestion, accepted, wordCorrections.size());
+        // Ademas de persistirlo, se reenvia a la IA para su entrenamiento por alumno (best-effort).
+        aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), selectedSuggestion, accepted);
+        return toResponse(session, wordCorrections);
+    }
+
+    private List<WordCorrection> deriveWordCorrections(CorrectionSession session, String acceptedSuggestion) {
+        // La IA ya no entrega el detalle palabra por palabra: se deriva por diff
+        // entre el texto original y la sugerencia aceptada.
+        List<WordCorrection> corrections = WordCorrectionDiff.between(session.getOriginalText(), acceptedSuggestion)
+                .stream()
+                .map(change -> new WordCorrection(
+                        session,
+                        change.originalWord(),
+                        change.correctedWord(),
+                        change.startPosition(),
+                        change.endPosition()))
+                .toList();
+        return corrections.isEmpty() ? List.of() : wordCorrectionRepository.saveAll(corrections);
     }
 
     @Transactional(readOnly = true)
     public List<WordCorrectionResponse> getWords(UUID studentId, UUID sessionId) {
+        requireStudent(studentId);
         findOwnedSession(studentId, sessionId);
         return wordCorrectionRepository.findByCorrectionSessionIdOrderByStartPosition(sessionId).stream()
                 .map(WordCorrectionResponse::from)
@@ -103,6 +117,7 @@ public class CorrectionService {
 
     @Transactional(readOnly = true)
     public PagedResponse<CorrectionSessionResponse> getSessions(UUID studentId, Pageable pageable) {
+        requireStudent(studentId);
         Pageable limited = PageRequest.of(pageable.getPageNumber(), Math.min(pageable.getPageSize(), 50), pageable.getSort());
         return PagedResponse.from(sessionRepository.findByStudentIdOrderByCreatedAtDesc(studentId, limited)
                 .map(session -> toResponse(session, List.of())));
@@ -111,6 +126,11 @@ public class CorrectionService {
     private CorrectionSession findOwnedSession(UUID studentId, UUID sessionId) {
         return sessionRepository.findByIdAndStudentId(sessionId, studentId)
                 .orElseThrow(() -> new NotFoundException("Correction session not found"));
+    }
+
+    private Student requireStudent(UUID studentId) {
+        return studentRepository.findById(studentId)
+                .orElseThrow(() -> new NotFoundException("Student not found"));
     }
 
     private CorrectionSessionResponse toResponse(CorrectionSession session, List<WordCorrection> corrections) {

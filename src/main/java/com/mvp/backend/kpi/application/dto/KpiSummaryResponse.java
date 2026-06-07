@@ -10,6 +10,5 @@ public record KpiSummaryResponse(
         String name,
         String month,
         @JsonProperty("tasa_aceptacion") AcceptanceRateResponse acceptanceRate,
-        @JsonProperty("errores_por_tipo") List<ErrorDistributionItem> errorsByType,
         @JsonProperty("top_palabras") List<TopWordItem> topWords) {
 }

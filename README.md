@@ -6,7 +6,7 @@ Spring Boot modular monolith for the adaptive FlorisBoard keyboard. The backend 
 
 - Java 21
 - PostgreSQL
-- AI container exposing `POST /interno/corregir`
+- AI container exposing `POST /interno/corregir` (only when `AI_MODE=http`; the default `AI_MODE=stub` runs without it)
 
 ## Run locally
 
@@ -22,9 +22,16 @@ JWT_ISSUER=florisboard-backend
 JWT_TOKEN_TTL=PT5H
 JWT_SECRET=replace-with-a-long-random-secret
 PERSONAL_DATA_KEY_BASE64=replace-with-a-base64-encoded-32-byte-key
+AI_MODE=stub
 AI_BASE_URL=http://localhost:5000
 AI_CORRECTION_PATH=/interno/corregir
 ```
+
+`AI_MODE` selects the AI correction backend. `stub` (the default) returns simulated responses
+without contacting any AI service —useful for deploying and integrating the keyboard and Angular
+portal while the real AI (BETO) is not ready— and logs the request/response JSON at `INFO` for
+inspection. Switch to `AI_MODE=http` to call the real AI service once it is available, with no code
+changes.
 
 For production also set `CORS_ALLOWED_ORIGINS` to the Angular portal domain(s) (comma-separated) and
 `ALLOW_INSECURE_DEFAULTS=false` so the app refuses to start with the bundled development secrets.

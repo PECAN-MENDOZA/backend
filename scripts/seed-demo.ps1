@@ -1,10 +1,12 @@
 param(
-    [switch]$Reset = $true
+    [switch]$Reset = $true,
+    [int]$StudentCount = 15
 )
 
 $arguments = @(
     "--app.demo-seed.enabled=true",
     "--app.demo-seed.exit-after-run=true",
+    "--app.demo-seed.student-count=$StudentCount",
     "--server.port=0"
 )
 

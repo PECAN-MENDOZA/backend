@@ -269,8 +269,12 @@ public class DemoDataSeeder implements ApplicationRunner {
                 {"student_015", "Nicolas Herrera"}
         };
 
+        int requested = properties.studentCount();
+        int limit = requested <= 0 ? studentData.length : Math.min(requested, studentData.length);
+
         List<StudentSeed> students = new ArrayList<>();
-        for (String[] row : studentData) {
+        for (int index = 0; index < limit; index++) {
+            String[] row = studentData[index];
             students.add(new StudentSeed(UUID.randomUUID(), row[0], row[1]));
         }
         return students;

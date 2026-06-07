@@ -4,6 +4,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -12,6 +13,7 @@ import com.mvp.backend.config.AiProperties;
 import com.mvp.backend.shared.exception.AiServiceException;
 
 @Component
+@ConditionalOnProperty(prefix = "app.ai", name = "mode", havingValue = "http")
 public class HttpAiCorrectionClient implements AiCorrectionClient {
 
     private static final Logger log = LoggerFactory.getLogger(HttpAiCorrectionClient.class);

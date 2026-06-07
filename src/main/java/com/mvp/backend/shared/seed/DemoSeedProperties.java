@@ -7,6 +7,7 @@ public record DemoSeedProperties(
         boolean enabled,
         boolean reset,
         boolean exitAfterRun,
+        int studentCount,
         String teacherPassword,
         String studentPassword) {
 }

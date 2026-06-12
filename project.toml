@@ -1,0 +1,5 @@
+# Configuracion para los buildpacks de Google Cloud (despliegue sin Docker).
+# Fija el runtime de Java en 21, requerido por Spring Boot 4.
+[[build.env]]
+name = "GOOGLE_RUNTIME_VERSION"
+value = "21"

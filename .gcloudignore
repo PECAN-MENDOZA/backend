@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+.vscode
+.m2
+target/
+.env
+*.zip
+docs/

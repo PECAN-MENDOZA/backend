@@ -11,11 +11,15 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class RestClientConfig {
 
-    // Si la IA se cuelga, el backend debe fallar rapido (AiServiceException) en vez de
-    // esperar el timeout de Cloud Run (~300s). Una correccion sana responde en ~1-2s, asi
-    // que estos margenes no afectan el flujo normal.
+    // La IA tiene un cold start de ~70s (arranque + carga del modelo) cuando estuvo inactiva.
+    // El read timeout debe permitir esa primera llamada lenta sin abortarla; una correccion
+    // con la IA caliente responde en ~1s. El connect timeout corto detecta que la IA no
+    // acepta conexiones; el read timeout (90s) cubre el cold start pero sigue por debajo del
+    // limite de Cloud Run (~300s) para no colgarse indefinidamente.
+    // NOTA: para que el teclado reciba esa primera correccion, la app movil tambien debe tener
+    // un readTimeout > cold start (~70s); si la app corta antes, fallara igual.
     private static final Duration AI_CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration AI_READ_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration AI_READ_TIMEOUT = Duration.ofSeconds(90);
 
     @Bean
     RestClient aiRestClient(AiProperties properties) {

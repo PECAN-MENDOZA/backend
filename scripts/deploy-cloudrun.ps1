@@ -10,8 +10,12 @@ $Service  = "backend"
 $Conn     = "project-0e0647d7-dc4f-4c52-82f:us-central1:pecan-mendoza-postgres"
 $DbUrl    = "jdbc:postgresql:///teclado-mvp?cloudSqlInstance=$Conn&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
 
+# IA: el backend usa la IA real (BETO) desplegada en el servicio api-correccion.
+# Para volver al modo simulado, cambiar AI_MODE=http por AI_MODE=stub (AI_BASE_URL se ignora en stub).
+$AiBaseUrl = "https://api-correccion-887695300669.us-central1.run.app"
+
 # CORS: cambiar "*" por el dominio del portal Angular cuando este desplegado.
-$EnvVars  = "^@^DB_URL=$DbUrl@DB_USERNAME=postgres@DB_SCHEMA=public@AI_MODE=stub@ALLOW_INSECURE_DEFAULTS=false@CORS_ALLOWED_ORIGINS=*@JWT_ISSUER=florisboard-backend"
+$EnvVars  = "^@^DB_URL=$DbUrl@DB_USERNAME=postgres@DB_SCHEMA=public@AI_MODE=http@AI_BASE_URL=$AiBaseUrl@ALLOW_INSECURE_DEFAULTS=false@CORS_ALLOWED_ORIGINS=*@JWT_ISSUER=florisboard-backend"
 $Secrets  = "DB_PASSWORD=florisboard-db-password:latest,JWT_SECRET=florisboard-jwt-secret:latest,PERSONAL_DATA_KEY_BASE64=florisboard-encryption-key:latest"
 
 gcloud run deploy $Service `

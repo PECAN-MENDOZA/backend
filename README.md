@@ -94,4 +94,4 @@ To populate a local database with 1 teacher, 15 students, linked records, monthl
 Default demo credentials:
 
 - teacher: `sofia.garcia@colegio.edu.pe` / `DemoTeacher123`
-- students: `student_001` to `student_015` / `DemoStudent123`
+- students: `student_001` to `student_015` / `1234` (4-digit PIN, same format as real students)

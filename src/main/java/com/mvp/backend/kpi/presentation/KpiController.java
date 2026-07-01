@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
+import com.mvp.backend.kpi.application.dto.AcceptanceTrendResponse;
 import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
@@ -34,6 +35,15 @@ public class KpiController {
             @PathVariable UUID studentId,
             @RequestParam String month) {
         return kpiService.acceptanceRate(UUID.fromString(jwt.getSubject()), studentId, month);
+    }
+
+    @GetMapping("/acceptance-trend")
+    public AcceptanceTrendResponse acceptanceTrend(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID studentId,
+            @RequestParam String from,
+            @RequestParam String to) {
+        return kpiService.acceptanceTrend(UUID.fromString(jwt.getSubject()), studentId, from, to);
     }
 
     @GetMapping("/top-words")

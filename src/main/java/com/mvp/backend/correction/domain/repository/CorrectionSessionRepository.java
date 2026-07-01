@@ -1,6 +1,7 @@
 package com.mvp.backend.correction.domain.repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,6 +40,22 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
               and session.createdAt < :end
             """)
     AcceptanceSummaryProjection acceptanceSummary(
+            @Param("studentId") UUID studentId,
+            @Param("start") Instant start,
+            @Param("end") Instant end);
+
+    @Query(value = """
+            select to_char(date_trunc('month', created_at at time zone 'UTC'), 'YYYY-MM') as month,
+                   count(*) as total,
+                   coalesce(sum(case when accepted_correction = true then 1 else 0 end), 0) as accepted
+            from correction_sessions
+            where student_id = :studentId
+              and created_at >= :start
+              and created_at < :end
+            group by month
+            order by month
+            """, nativeQuery = true)
+    List<Object[]> monthlyAcceptance(
             @Param("studentId") UUID studentId,
             @Param("start") Instant start,
             @Param("end") Instant end);

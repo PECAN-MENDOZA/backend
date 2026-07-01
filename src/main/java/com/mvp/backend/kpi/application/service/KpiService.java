@@ -6,9 +6,12 @@ import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
@@ -20,9 +23,11 @@ import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.domain.service.WordErrorClassifier;
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
+import com.mvp.backend.kpi.application.dto.AcceptanceTrendResponse;
 import com.mvp.backend.kpi.application.dto.ErrorTypeItem;
 import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
+import com.mvp.backend.kpi.application.dto.MonthlyAcceptancePoint;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
 import com.mvp.backend.shared.exception.BusinessException;
@@ -129,6 +134,40 @@ public class KpiService {
                 .toList();
 
         return new ErrorTypesResponse(studentId, parsedMonth.toString(), total, items);
+    }
+
+    private static final int MAX_TREND_MONTHS = 24;
+
+    @Transactional
+    public AcceptanceTrendResponse acceptanceTrend(UUID teacherId, UUID studentId, String from, String to) {
+        requireLink(teacherId, studentId);
+        YearMonth start = parseMonth(from);
+        YearMonth end = parseMonth(to);
+        if (start.isAfter(end)) {
+            throw new BusinessException("'from' must not be after 'to'");
+        }
+        long span = start.until(end, java.time.temporal.ChronoUnit.MONTHS) + 1;
+        if (span > MAX_TREND_MONTHS) {
+            throw new BusinessException("Trend range must not exceed " + MAX_TREND_MONTHS + " months");
+        }
+
+        Instant rangeStart = start.atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        Instant rangeEnd = end.plusMonths(1).atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+
+        Map<String, long[]> byMonth = new HashMap<>();
+        for (Object[] row : sessionRepository.monthlyAcceptance(studentId, rangeStart, rangeEnd)) {
+            byMonth.put((String) row[0], new long[] {number(row[1]), number(row[2])});
+        }
+
+        List<MonthlyAcceptancePoint> series = new ArrayList<>();
+        for (YearMonth month = start; !month.isAfter(end); month = month.plusMonths(1)) {
+            long[] totals = byMonth.getOrDefault(month.toString(), new long[] {0L, 0L});
+            long total = totals[0];
+            long accepted = totals[1];
+            series.add(new MonthlyAcceptancePoint(month.toString(), total, accepted, percentage(accepted, total)));
+        }
+
+        return new AcceptanceTrendResponse(studentId, start.toString(), end.toString(), series);
     }
 
     private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {

@@ -118,6 +118,35 @@ class KpiServiceTests {
         assertThat(response.errorTypes().get(1).count()).isEqualTo(1);
     }
 
+    @Test
+    void buildsAcceptanceTrendFillingMissingMonths() {
+        UUID teacherId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        Teacher teacher = new Teacher("teacher_04", "teacher4@school.edu", null, "School", "encoded");
+        Student student = new Student("student_04", "School", "encoded");
+        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+
+        when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
+                .thenReturn(Optional.of(link));
+        when(sessionRepository.monthlyAcceptance(studentId, Instant.parse("2026-03-01T00:00:00Z"),
+                Instant.parse("2026-06-01T00:00:00Z")))
+                .thenReturn(java.util.List.of(
+                        new Object[] {"2026-03", 10L, 6L},
+                        new Object[] {"2026-05", 4L, 4L}));
+
+        var response = kpiService.acceptanceTrend(teacherId, studentId, "2026-03", "2026-05");
+
+        assertThat(response.series()).hasSize(3);
+        assertThat(response.series().get(0).month()).isEqualTo("2026-03");
+        assertThat(response.series().get(0).percentage()).isEqualTo(60.0);
+        // Abril no tiene datos: se rellena con ceros.
+        assertThat(response.series().get(1).month()).isEqualTo("2026-04");
+        assertThat(response.series().get(1).total()).isZero();
+        assertThat(response.series().get(1).percentage()).isZero();
+        assertThat(response.series().get(2).month()).isEqualTo("2026-05");
+        assertThat(response.series().get(2).percentage()).isEqualTo(100.0);
+    }
+
     private record AcceptanceSummaryProjectionStub(
             Long totalSessions,
             Long acceptedSessions,

@@ -110,7 +110,7 @@ class CorrectionServiceTests {
         var response = correctionService.registerFeedback(
                 student.getId(),
                 session.getId(),
-                new CorrectionFeedbackRequest("el nino iba", true));
+                new CorrectionFeedbackRequest("el nino iba", true, null));
 
         assertThat(response.correctionsCount()).isEqualTo(1);
         assertThat(response.acceptedCorrection()).isTrue();
@@ -124,6 +124,33 @@ class CorrectionServiceTests {
     }
 
     @Test
+    void editingSuggestionUsesFinalTextForDiffAndAiLearning() {
+        var student = readyStudent("student_08");
+        var session = new CorrectionSession(student, "el nino iva");
+        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(sessionRepository.findByIdAndStudentId(session.getId(), student.getId())).thenReturn(Optional.of(session));
+        when(wordCorrectionRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Base = sugerencia ofrecida "el nino iba"; el alumno la edita a "el niño iba".
+        var response = correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest("el nino iba", true, "el niño iba"));
+
+        assertThat(response.acceptedCorrection()).isTrue();
+        assertThat(response.wasEdited()).isTrue();
+        assertThat(response.finalText()).isEqualTo("el niño iba");
+        // El diff se calcula contra el texto EDITADO (nino->niño ademas de iva->iba),
+        // no contra la sugerencia base (que solo daria iva->iba).
+        assertThat(response.correctedWords())
+                .extracting(word -> word.originalWord() + "->" + word.correctedWord())
+                .containsExactlyInAnyOrder("nino->niño", "iva->iba");
+        // La IA aprende del texto editado.
+        verify(aiCorrectionClient).sendFeedback(student.getId(), "el nino iva", "el niño iba", true);
+    }
+
+    @Test
     void ignoringFeedbackStoresNoWordCorrections() {
         var student = readyStudent("student_07");
         var session = new CorrectionSession(student, "el nino iva");
@@ -134,7 +161,7 @@ class CorrectionServiceTests {
         var response = correctionService.registerFeedback(
                 student.getId(),
                 session.getId(),
-                new CorrectionFeedbackRequest(null, false));
+                new CorrectionFeedbackRequest(null, false, null));
 
         assertThat(response.acceptedCorrection()).isFalse();
         assertThat(response.correctionsCount()).isZero();
@@ -152,7 +179,7 @@ class CorrectionServiceTests {
         assertThatThrownBy(() -> correctionService.registerFeedback(
                 student.getId(),
                 session.getId(),
-                new CorrectionFeedbackRequest("opcion inventada", true)))
+                new CorrectionFeedbackRequest("opcion inventada", true, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Selected suggestion was not offered for this correction session");
     }
@@ -167,7 +194,7 @@ class CorrectionServiceTests {
         assertThatThrownBy(() -> correctionService.registerFeedback(
                 student.getId(),
                 session.getId(),
-                new CorrectionFeedbackRequest(null, true)))
+                new CorrectionFeedbackRequest(null, true, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Accepted correction requires a selected suggestion");
     }

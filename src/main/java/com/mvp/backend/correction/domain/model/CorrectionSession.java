@@ -51,6 +51,12 @@ public class CorrectionSession {
     @Column(name = "response_time_ms")
     private Long responseTimeMs;
 
+    @Column(name = "final_text", columnDefinition = "TEXT")
+    private String finalText;
+
+    @Column(name = "was_edited", nullable = false)
+    private boolean wasEdited;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -78,8 +84,10 @@ public class CorrectionSession {
         this.responseTimeMs = responseTimeMs;
     }
 
-    public void registerFeedback(String selectedSuggestion, boolean acceptedCorrection, int correctionsCount) {
+    public void registerFeedback(String selectedSuggestion, String finalText, boolean acceptedCorrection, int correctionsCount) {
         this.selectedSuggestion = selectedSuggestion;
+        this.finalText = finalText;
+        this.wasEdited = finalText != null && !finalText.equals(selectedSuggestion);
         this.acceptedCorrection = acceptedCorrection;
         this.correctionsCount = correctionsCount;
     }

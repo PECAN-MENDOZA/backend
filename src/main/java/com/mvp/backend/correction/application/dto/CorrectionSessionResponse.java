@@ -17,6 +17,8 @@ public record CorrectionSessionResponse(
         @JsonProperty("sugerencia_elegida") String selectedSuggestion,
         @JsonProperty("acepto_correccion") Boolean acceptedCorrection,
         @JsonProperty("tiempo_respuesta_ms") Long responseTimeMs,
+        @JsonProperty("texto_final") String finalText,
+        @JsonProperty("fue_editada") boolean wasEdited,
         @JsonProperty("palabras_corregidas") List<WordCorrectionResponse> correctedWords,
         Instant createdAt) {
 
@@ -34,6 +36,8 @@ public record CorrectionSessionResponse(
                 session.getSelectedSuggestion(),
                 session.getAcceptedCorrection(),
                 session.getResponseTimeMs(),
+                session.getFinalText(),
+                session.isWasEdited(),
                 correctedWords,
                 session.getCreatedAt());
     }

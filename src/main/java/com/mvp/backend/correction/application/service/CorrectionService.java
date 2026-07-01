@@ -79,15 +79,18 @@ public class CorrectionService {
         var session = findOwnedSession(studentId, sessionId);
         String selectedSuggestion = validateSelectedSuggestion(session, request);
         boolean accepted = request.acceptedCorrection();
+        String finalText = emptyToNull(request.finalText());
+        // Texto que el alumno realmente validó: su edición si la hay, si no la sugerencia base.
+        String acceptedText = finalText != null ? finalText : selectedSuggestion;
 
         // El feedback puede reenviarse: recalculamos siempre desde cero.
         wordCorrectionRepository.deleteByCorrectionSessionId(sessionId);
-        List<WordCorrection> wordCorrections = accepted && selectedSuggestion != null
-                ? deriveWordCorrections(session, selectedSuggestion)
+        List<WordCorrection> wordCorrections = accepted && acceptedText != null
+                ? deriveWordCorrections(session, acceptedText)
                 : List.of();
-        session.registerFeedback(selectedSuggestion, accepted, wordCorrections.size());
-        // Ademas de persistirlo, se reenvia a la IA para su entrenamiento por alumno (best-effort).
-        aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), selectedSuggestion, accepted);
+        session.registerFeedback(selectedSuggestion, finalText, accepted, wordCorrections.size());
+        // Se reenvía a la IA el texto validado a mano (texto_final si existe) para su aprendizaje (best-effort).
+        aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), acceptedText, accepted);
         return toResponse(session, wordCorrections);
     }
 

@@ -163,7 +163,7 @@ class ReportServiceTests {
                 name,
                 "2026-05",
                 new AcceptanceRateResponse(studentId, "2026-05", totalSubmissions, totalAccepted, totalRejected, unanswered,
-                        totalSubmissions == 0 ? 0 : 78.57),
+                        0, totalSubmissions == 0 ? 0 : 78.57),
                 List.of(new TopWordItem("ermano", 2, 2)));
     }
 }

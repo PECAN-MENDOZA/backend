@@ -55,7 +55,7 @@ class KpiServiceTests {
                 .thenReturn(Optional.of(link));
         when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T00:00:00Z"),
                 Instant.parse("2026-06-01T00:00:00Z")))
-                .thenReturn(new AcceptanceSummaryProjectionStub(20L, 12L, 5L, 3L));
+                .thenReturn(new AcceptanceSummaryProjectionStub(20L, 12L, 5L, 3L, 4L));
 
         var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05");
 
@@ -63,6 +63,7 @@ class KpiServiceTests {
         assertThat(response.totalAccepted()).isEqualTo(12);
         assertThat(response.totalRejected()).isEqualTo(5);
         assertThat(response.unanswered()).isEqualTo(3);
+        assertThat(response.totalEdited()).isEqualTo(4);
         assertThat(response.acceptanceRatePercentage()).isEqualTo(60.0);
     }
 
@@ -78,7 +79,7 @@ class KpiServiceTests {
                 .thenReturn(Optional.of(link));
         when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T00:00:00Z"),
                 Instant.parse("2026-06-01T00:00:00Z")))
-                .thenReturn(new AcceptanceSummaryProjectionStub(0L, null, null, null));
+                .thenReturn(new AcceptanceSummaryProjectionStub(0L, null, null, null, null));
 
         var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05");
 
@@ -86,6 +87,7 @@ class KpiServiceTests {
         assertThat(response.totalAccepted()).isZero();
         assertThat(response.totalRejected()).isZero();
         assertThat(response.unanswered()).isZero();
+        assertThat(response.totalEdited()).isZero();
         assertThat(response.acceptanceRatePercentage()).isZero();
     }
 
@@ -151,7 +153,8 @@ class KpiServiceTests {
             Long totalSessions,
             Long acceptedSessions,
             Long rejectedSessions,
-            Long unansweredSessions) implements CorrectionSessionRepository.AcceptanceSummaryProjection {
+            Long unansweredSessions,
+            Long editedSessions) implements CorrectionSessionRepository.AcceptanceSummaryProjection {
 
         @Override
         public Long getTotalSessions() {
@@ -171,6 +174,11 @@ class KpiServiceTests {
         @Override
         public Long getUnansweredSessions() {
             return unansweredSessions;
+        }
+
+        @Override
+        public Long getEditedSessions() {
+            return editedSessions;
         }
     }
 }

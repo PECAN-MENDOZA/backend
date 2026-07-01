@@ -88,6 +88,7 @@ public class KpiService {
         long accepted = number(result.getAcceptedSessions());
         long rejected = number(result.getRejectedSessions());
         long unanswered = number(result.getUnansweredSessions());
+        long edited = number(result.getEditedSessions());
         return new AcceptanceRateResponse(
                 studentId,
                 month.toString(),
@@ -95,6 +96,7 @@ public class KpiService {
                 accepted,
                 rejected,
                 unanswered,
+                edited,
                 percentage(accepted, total));
     }
 

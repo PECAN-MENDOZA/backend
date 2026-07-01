@@ -23,6 +23,8 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
         Long getRejectedSessions();
 
         Long getUnansweredSessions();
+
+        Long getEditedSessions();
     }
 
     Optional<CorrectionSession> findByIdAndStudentId(UUID id, UUID studentId);
@@ -33,7 +35,8 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
             select count(session) as totalSessions,
                    sum(case when session.acceptedCorrection = true then 1 else 0 end) as acceptedSessions,
                    sum(case when session.acceptedCorrection = false then 1 else 0 end) as rejectedSessions,
-                   sum(case when session.acceptedCorrection is null then 1 else 0 end) as unansweredSessions
+                   sum(case when session.acceptedCorrection is null then 1 else 0 end) as unansweredSessions,
+                   sum(case when session.wasEdited = true then 1 else 0 end) as editedSessions
             from CorrectionSession session
             where session.student.id = :studentId
               and session.createdAt >= :start

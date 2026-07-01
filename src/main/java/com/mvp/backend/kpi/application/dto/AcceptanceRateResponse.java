@@ -11,5 +11,6 @@ public record AcceptanceRateResponse(
         @JsonProperty("total_aceptadas") long totalAccepted,
         @JsonProperty("total_rechazadas") long totalRejected,
         @JsonProperty("sin_respuesta") long unanswered,
+        @JsonProperty("total_editadas") long totalEdited,
         @JsonProperty("tasa_aceptacion_pct") double acceptanceRatePercentage) {
 }

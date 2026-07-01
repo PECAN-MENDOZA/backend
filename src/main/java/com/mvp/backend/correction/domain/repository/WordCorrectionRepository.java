@@ -34,4 +34,17 @@ public interface WordCorrectionRepository extends JpaRepository<WordCorrection, 
             @Param("start") Instant start,
             @Param("end") Instant end,
             Pageable pageable);
+
+    @Query("""
+            select correction.originalWord, correction.correctedWord
+            from WordCorrection correction
+            join correction.correctionSession session
+            where session.student.id = :studentId
+              and session.createdAt >= :start
+              and session.createdAt < :end
+            """)
+    List<Object[]> wordPairsForMonth(
+            @Param("studentId") UUID studentId,
+            @Param("start") Instant start,
+            @Param("end") Instant end);
 }

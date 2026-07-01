@@ -89,6 +89,35 @@ class KpiServiceTests {
         assertThat(response.acceptanceRatePercentage()).isZero();
     }
 
+    @Test
+    void aggregatesErrorTypesByFrequency() {
+        UUID teacherId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        Teacher teacher = new Teacher("teacher_03", "teacher3@school.edu", null, "School", "encoded");
+        Student student = new Student("student_03", "School", "encoded");
+        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+
+        when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
+                .thenReturn(Optional.of(link));
+        when(wordCorrectionRepository.wordPairsForMonth(studentId, Instant.parse("2026-05-01T00:00:00Z"),
+                Instant.parse("2026-06-01T00:00:00Z")))
+                .thenReturn(java.util.List.of(
+                        new Object[] {"jugo", "jugó"},     // TILDE
+                        new Object[] {"cancion", "canción"}, // TILDE
+                        new Object[] {"bamos", "vamos"}));   // CONFUSION_B_V
+
+        var response = kpiService.errorTypes(teacherId, studentId, "2026-05");
+
+        assertThat(response.totalErrors()).isEqualTo(3);
+        assertThat(response.errorTypes()).hasSize(2);
+        // Ordenado por frecuencia descendente: TILDE (2) primero.
+        assertThat(response.errorTypes().get(0).errorType()).isEqualTo("TILDE");
+        assertThat(response.errorTypes().get(0).count()).isEqualTo(2);
+        assertThat(response.errorTypes().get(0).percentage()).isEqualTo(66.67);
+        assertThat(response.errorTypes().get(1).errorType()).isEqualTo("CONFUSION_B_V");
+        assertThat(response.errorTypes().get(1).count()).isEqualTo(1);
+    }
+
     private record AcceptanceSummaryProjectionStub(
             Long totalSessions,
             Long acceptedSessions,

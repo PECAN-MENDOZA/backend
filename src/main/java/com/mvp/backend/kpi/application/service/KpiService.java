@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -13,9 +15,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.mvp.backend.correction.domain.model.ErrorType;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
+import com.mvp.backend.correction.domain.service.WordErrorClassifier;
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
+import com.mvp.backend.kpi.application.dto.ErrorTypeItem;
+import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
@@ -98,6 +104,31 @@ public class KpiService {
                         number(row[2])))
                 .toList();
         return new TopWordsResponse(studentId, month.toString(), words);
+    }
+
+    @Transactional
+    public ErrorTypesResponse errorTypes(UUID teacherId, UUID studentId, String month) {
+        requireLink(teacherId, studentId);
+        YearMonth parsedMonth = parseMonth(month);
+        MonthRange range = range(parsedMonth);
+
+        EnumMap<ErrorType, Long> counts = new EnumMap<>(ErrorType.class);
+        for (Object[] row : wordCorrectionRepository.wordPairsForMonth(studentId, range.start(), range.end())) {
+            ErrorType type = WordErrorClassifier.classify((String) row[0], (String) row[1]);
+            counts.merge(type, 1L, Long::sum);
+        }
+
+        long total = counts.values().stream().mapToLong(Long::longValue).sum();
+        List<ErrorTypeItem> items = counts.entrySet().stream()
+                .map(entry -> new ErrorTypeItem(
+                        entry.getKey().name(),
+                        entry.getKey().getLabel(),
+                        entry.getValue(),
+                        percentage(entry.getValue(), total)))
+                .sorted(Comparator.comparingLong(ErrorTypeItem::count).reversed())
+                .toList();
+
+        return new ErrorTypesResponse(studentId, parsedMonth.toString(), total, items);
     }
 
     private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {

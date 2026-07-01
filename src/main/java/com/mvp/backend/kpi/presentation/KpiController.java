@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
+import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
 import com.mvp.backend.kpi.application.service.KpiService;
@@ -41,6 +42,14 @@ public class KpiController {
             @PathVariable UUID studentId,
             @RequestParam String month) {
         return kpiService.topWords(UUID.fromString(jwt.getSubject()), studentId, month);
+    }
+
+    @GetMapping("/error-types")
+    public ErrorTypesResponse errorTypes(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID studentId,
+            @RequestParam String month) {
+        return kpiService.errorTypes(UUID.fromString(jwt.getSubject()), studentId, month);
     }
 
     @GetMapping("/summary")

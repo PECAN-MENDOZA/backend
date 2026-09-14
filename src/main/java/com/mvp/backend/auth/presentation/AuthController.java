@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mvp.backend.auth.application.dto.AuthResponse;
+import com.mvp.backend.auth.application.dto.StaffLoginRequest;
 import com.mvp.backend.auth.application.dto.StudentLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherRegistrationRequest;
@@ -38,5 +39,10 @@ public class AuthController {
     @PostMapping("/teachers/login")
     public AuthResponse loginTeacher(@Valid @RequestBody TeacherLoginRequest request) {
         return authService.loginTeacher(request);
+    }
+
+    @PostMapping("/staff/login")
+    public AuthResponse loginStaff(@Valid @RequestBody StaffLoginRequest request) {
+        return authService.loginStaff(request);
     }
 }

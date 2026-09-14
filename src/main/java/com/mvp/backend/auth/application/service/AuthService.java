@@ -5,10 +5,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.mvp.backend.auth.application.dto.AuthResponse;
+import com.mvp.backend.auth.application.dto.StaffLoginRequest;
 import com.mvp.backend.auth.application.dto.StudentLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherRegistrationRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
+import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.UnauthorizedException;
 import com.mvp.backend.student.domain.repository.StudentRepository;
@@ -20,16 +22,19 @@ public class AuthService {
 
     private final StudentRepository studentRepository;
     private final TeacherRepository teacherRepository;
+    private final ResearcherRepository researcherRepository;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
 
     public AuthService(
             StudentRepository studentRepository,
             TeacherRepository teacherRepository,
+            ResearcherRepository researcherRepository,
             PasswordEncoder passwordEncoder,
             TokenService tokenService) {
         this.studentRepository = studentRepository;
         this.teacherRepository = teacherRepository;
+        this.researcherRepository = researcherRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
     }
@@ -66,6 +71,21 @@ public class AuthService {
                 .orElseThrow(() -> new UnauthorizedException("Invalid teacher credentials"));
         verifyPassword(request.password(), teacher.getPasswordHash(), "Invalid teacher credentials");
         return tokenService.issue(teacher.getId(), UserRole.TEACHER);
+    }
+
+    @Transactional(readOnly = true)
+    public AuthResponse loginStaff(StaffLoginRequest request) {
+        var researcher = researcherRepository.findByEmail(request.email());
+        if (researcher.isPresent()
+                && passwordEncoder.matches(request.password(), researcher.get().getPasswordHash())) {
+            return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER);
+        }
+        var teacher = teacherRepository.findByEmail(request.email());
+        if (teacher.isPresent()
+                && passwordEncoder.matches(request.password(), teacher.get().getPasswordHash())) {
+            return tokenService.issue(teacher.get().getId(), UserRole.TEACHER);
+        }
+        throw new UnauthorizedException("Invalid staff credentials");
     }
 
     private void verifyPassword(String rawPassword, String passwordHash, String message) {

@@ -47,7 +47,7 @@ CREATE TABLE experiment_runs (
     task_id UUID NOT NULL REFERENCES protocol_tasks(id),
     condition VARCHAR(20) NOT NULL,
     status VARCHAR(30) NOT NULL,
-    access_code_hash CHAR(64),
+    access_code_hash VARCHAR(64),
     access_code_expires_at TIMESTAMP WITH TIME ZONE,
     redeemed_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
@@ -85,6 +85,7 @@ ALTER TABLE correction_sessions
 CREATE INDEX idx_protocols_study ON study_protocols(study_id, version DESC);
 CREATE INDEX idx_participants_study ON study_participants(study_id, pseudonym);
 CREATE INDEX idx_runs_participant ON experiment_runs(participant_id, created_at);
-CREATE INDEX idx_runs_access_code_hash ON experiment_runs(access_code_hash) WHERE access_code_hash IS NOT NULL;
+CREATE UNIQUE INDEX uk_runs_access_code_hash ON experiment_runs(access_code_hash) WHERE access_code_hash IS NOT NULL;
+CREATE UNIQUE INDEX uk_runs_one_open_per_participant ON experiment_runs(participant_id) WHERE status IN ('PENDING', 'ACTIVE');
 CREATE INDEX idx_correction_experiment ON correction_sessions(experiment_run_id);
 CREATE INDEX idx_research_audit_study ON research_audit_events(study_id, created_at DESC);

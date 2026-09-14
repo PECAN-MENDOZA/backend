@@ -1,5 +1,6 @@
 package com.mvp.backend.experiment.domain.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,20 +16,25 @@ public interface ExperimentRunRepository extends JpaRepository<ExperimentRun, UU
 
     Optional<ExperimentRun> findByIdAndParticipantStudentId(UUID runId, UUID studentId);
 
-    Optional<ExperimentRun> findFirstByAccessCodeHashAndStatus(String hash, ExperimentRunStatus status);
+    // El indice unico parcial garantiza a lo sumo una ejecucion abierta por hash; si hubiera mas,
+    // Spring Data lanza IncorrectResultSizeDataAccessException (fallo seguro).
+    Optional<ExperimentRun> findByAccessCodeHashAndStatus(String hash, ExperimentRunStatus status);
 
     Optional<ExperimentRun> findFirstByParticipantStudentIdAndStatus(UUID studentId, ExperimentRunStatus status);
 
-    // Restauracion: ACTIVE, o PENDING ya canjeada (la app se cerro antes de confirmar el inicio).
+    // Restauracion: ACTIVE primero, luego PENDING ya canjeada (la app se cerro antes de confirmar
+    // el inicio); dentro de cada grupo, la mas reciente.
     @Query("""
             select r from ExperimentRun r
             where r.participant.student.id = :studentId
               and (r.status = 'ACTIVE' or (r.status = 'PENDING' and r.redeemedAt is not null))
-            order by r.redeemedAt desc
+            order by case when r.status = 'ACTIVE' then 0 else 1 end, r.redeemedAt desc, r.createdAt desc
             """)
     List<ExperimentRun> findRestorableByStudentId(@Param("studentId") UUID studentId);
 
     long countByParticipantIdAndStatus(UUID participantId, ExperimentRunStatus status);
+
+    boolean existsByParticipantIdAndStatusIn(UUID participantId, Collection<ExperimentRunStatus> statuses);
 
     List<ExperimentRun> findByParticipantIdOrderByCreatedAtAsc(UUID participantId);
 

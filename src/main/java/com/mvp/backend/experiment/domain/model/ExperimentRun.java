@@ -1,6 +1,7 @@
 package com.mvp.backend.experiment.domain.model;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 import com.mvp.backend.research.domain.model.ProtocolTask;
@@ -117,15 +118,15 @@ public class ExperimentRun {
             Instant expiresAt,
             Instant createdAt) {
         this.id = UUID.randomUUID();
-        this.participant = participant;
-        this.protocol = protocol;
-        this.task = task;
-        this.condition = condition;
+        this.participant = Objects.requireNonNull(participant);
+        this.protocol = Objects.requireNonNull(protocol);
+        this.task = Objects.requireNonNull(task);
+        this.condition = Objects.requireNonNull(condition);
         this.status = ExperimentRunStatus.PENDING;
-        this.accessCodeHash = accessCodeHash;
-        this.accessCodeExpiresAt = expiresAt;
+        this.accessCodeHash = Objects.requireNonNull(accessCodeHash);
+        this.accessCodeExpiresAt = Objects.requireNonNull(expiresAt);
         this.incidentCount = 0;
-        this.createdAt = createdAt;
+        this.createdAt = Objects.requireNonNull(createdAt);
     }
 
     @PrePersist
@@ -164,6 +165,7 @@ public class ExperimentRun {
     }
 
     public void complete(String text, long duration, UUID key, Instant now) {
+        Objects.requireNonNull(key);
         if (status == ExperimentRunStatus.COMPLETED && key.equals(completionKey)) {
             return;
         }
@@ -187,10 +189,98 @@ public class ExperimentRun {
         failureReason = reason;
     }
 
-    public void recordVersions(String appVersion, String backendVersion, String modelVersion) {
-        this.appVersion = appVersion;
-        this.backendVersion = backendVersion;
-        this.modelVersion = modelVersion;
+    /** Cancelacion explicita (alumno o investigador) antes de completar. Idempotente. */
+    public void cancel(String reason, Instant now) {
+        Objects.requireNonNull(now);
+        if (status == ExperimentRunStatus.CANCELLED) {
+            return;
+        }
+        if (status != ExperimentRunStatus.PENDING && status != ExperimentRunStatus.ACTIVE) {
+            throw new IllegalStateException("Only pending or active runs can be cancelled");
+        }
+        status = ExperimentRunStatus.CANCELLED;
+        failureReason = requireReason(reason);
+        completedAt = now;
+        accessCodeHash = null;
+    }
+
+    /** El codigo vencio sin iniciar. Idempotente. */
+    public void expire(Instant now) {
+        Objects.requireNonNull(now);
+        if (status == ExperimentRunStatus.EXPIRED) {
+            return;
+        }
+        if (status != ExperimentRunStatus.PENDING) {
+            throw new IllegalStateException("Only pending runs can expire");
+        }
+        status = ExperimentRunStatus.EXPIRED;
+        completedAt = now;
+        accessCodeHash = null;
+    }
+
+    /** Una incidencia impidio obtener una sesion valida. Idempotente. */
+    public void failTechnically(String reason, Instant now) {
+        Objects.requireNonNull(now);
+        if (status == ExperimentRunStatus.TECHNICAL_FAILURE) {
+            return;
+        }
+        if (status != ExperimentRunStatus.PENDING && status != ExperimentRunStatus.ACTIVE) {
+            throw new IllegalStateException("Only pending or active runs can fail technically");
+        }
+        status = ExperimentRunStatus.TECHNICAL_FAILURE;
+        failureReason = requireReason(reason);
+        incidentCount++;
+        completedAt = now;
+        accessCodeHash = null;
+    }
+
+    /** Exclusion analitica trazable: no borra nada, solo marca. Solo COMPLETED o TECHNICAL_FAILURE. */
+    public void exclude(String reason, Researcher by, Instant now) {
+        Objects.requireNonNull(now);
+        if (status != ExperimentRunStatus.COMPLETED && status != ExperimentRunStatus.TECHNICAL_FAILURE) {
+            throw new IllegalStateException("Only completed or failed runs can be excluded");
+        }
+        if (excludedAt != null) {
+            throw new IllegalStateException("Run is already excluded");
+        }
+        exclusionReason = requireReason(reason);
+        excludedBy = Objects.requireNonNull(by);
+        excludedAt = now;
+    }
+
+    /** Version del backend: se fija al iniciar y no cambia. */
+    public void recordBackendVersion(String version) {
+        if (status != ExperimentRunStatus.ACTIVE || backendVersion != null) {
+            return;
+        }
+        backendVersion = version;
+    }
+
+    /** Version de la app: la informa el telefono al completar. */
+    public void recordAppVersion(String version) {
+        if (status != ExperimentRunStatus.COMPLETED || appVersion != null) {
+            return;
+        }
+        appVersion = version;
+    }
+
+    /** Version del modelo: la primera no vacia se conserva; una distinta posterior se rechaza (false). */
+    public boolean recordModelVersion(String version) {
+        if (version == null || version.isBlank()) {
+            return true;
+        }
+        if (modelVersion == null) {
+            modelVersion = version;
+            return true;
+        }
+        return modelVersion.equals(version);
+    }
+
+    private static String requireReason(String reason) {
+        if (reason == null || reason.strip().length() < 10 || reason.length() > 500) {
+            throw new IllegalArgumentException("Reason must have between 10 and 500 characters");
+        }
+        return reason.strip();
     }
 
     public boolean isActive() {

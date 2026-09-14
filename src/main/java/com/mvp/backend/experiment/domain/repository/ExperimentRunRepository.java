@@ -16,6 +16,8 @@ public interface ExperimentRunRepository extends JpaRepository<ExperimentRun, UU
 
     Optional<ExperimentRun> findByIdAndParticipantStudentId(UUID runId, UUID studentId);
 
+    Optional<ExperimentRun> findByIdAndParticipantStudyId(UUID runId, UUID studyId);
+
     // El indice unico parcial garantiza a lo sumo una ejecucion abierta por hash; si hubiera mas,
     // Spring Data lanza IncorrectResultSizeDataAccessException (fallo seguro).
     Optional<ExperimentRun> findByAccessCodeHashAndStatus(String hash, ExperimentRunStatus status);

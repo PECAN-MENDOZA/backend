@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -23,6 +24,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     ResponseEntity<ApiError> handleForbidden(ForbiddenException exception, HttpServletRequest request) {
         return error(HttpStatus.FORBIDDEN, exception.getMessage(), request, Map.of());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ApiError> handleConflict(ConflictException exception, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, exception.getMessage(), request, Map.of());
+    }
+
+    // Restricciones unicas no cubiertas por una validacion previa (p. ej. completion_key repetida).
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException exception, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, "Request conflicts with existing data", request, Map.of());
     }
 
     @ExceptionHandler(UnauthorizedException.class)

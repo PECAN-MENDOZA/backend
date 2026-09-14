@@ -1,7 +1,10 @@
 package com.mvp.backend.auth.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +26,7 @@ import com.mvp.backend.auth.application.dto.TeacherRegistrationRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
+import com.mvp.backend.shared.exception.UnauthorizedException;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
@@ -49,6 +53,7 @@ class AuthServiceTests {
 
     @BeforeEach
     void setUp() {
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
         authService = new AuthService(
                 studentRepository, teacherRepository, researcherRepository, passwordEncoder, tokenService);
     }
@@ -104,5 +109,16 @@ class AuthServiceTests {
                 new StaffLoginRequest("authors@tesis.local", "Research123"));
 
         assertThat(response.role()).isEqualTo(UserRole.RESEARCHER);
+    }
+
+    @Test
+    void unknownStaffEmailStillRunsAPasswordComparison() {
+        when(researcherRepository.findByEmail("nobody@x.test")).thenReturn(Optional.empty());
+        when(teacherRepository.findByEmail("nobody@x.test")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("nobody@x.test", "whatever")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid staff credentials");
+        verify(passwordEncoder).matches(eq("whatever"), anyString());
     }
 }

@@ -1,5 +1,7 @@
 package com.mvp.backend.auth.application.service;
 
+import java.util.UUID;
+
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,7 @@ public class AuthService {
     private final ResearcherRepository researcherRepository;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
+    private final String dummyHash;
 
     public AuthService(
             StudentRepository studentRepository,
@@ -37,6 +40,7 @@ public class AuthService {
         this.researcherRepository = researcherRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
+        this.dummyHash = passwordEncoder.encode("staff-login-dummy-" + UUID.randomUUID());
     }
 
     @Transactional(readOnly = true)
@@ -85,6 +89,8 @@ public class AuthService {
                 && passwordEncoder.matches(request.password(), teacher.get().getPasswordHash())) {
             return tokenService.issue(teacher.get().getId(), UserRole.TEACHER);
         }
+        // Comparación ficticia: el tiempo de respuesta no debe revelar si el correo existe.
+        passwordEncoder.matches(request.password(), dummyHash);
         throw new UnauthorizedException("Invalid staff credentials");
     }
 

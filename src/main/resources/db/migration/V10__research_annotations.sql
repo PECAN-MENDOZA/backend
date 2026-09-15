@@ -24,6 +24,10 @@ CREATE TABLE annotation_items (
     run_id UUID NOT NULL REFERENCES experiment_runs(id),
     correction_session_id UUID REFERENCES correction_sessions(id),
     suggestion_index INTEGER,
+    -- Aceptacion congelada al crear el lote semantico (NULL en lotes ortograficos): TAS aceptada y la
+    -- exportacion de analisis nunca releen el estado vivo de la sesion.
+    accepted_at_export BOOLEAN,
+    accepted_index_at_export INTEGER,
     rater_1_score INTEGER,
     rater_2_score INTEGER,
     adjudicated_score INTEGER,
@@ -31,6 +35,13 @@ CREATE TABLE annotation_items (
     CONSTRAINT ck_annotation_source CHECK (
         (correction_session_id IS NULL AND suggestion_index IS NULL)
         OR (correction_session_id IS NOT NULL AND suggestion_index >= 0)
+    ),
+    -- IS TRUE / IS FALSE / IS NOT NULL: una comparacion con NULL daria NULL y el CHECK dejaria pasar la fila.
+    CONSTRAINT ck_annotation_acceptance CHECK (
+        (correction_session_id IS NULL AND accepted_at_export IS NULL AND accepted_index_at_export IS NULL)
+        OR (correction_session_id IS NOT NULL AND accepted_at_export IS FALSE AND accepted_index_at_export IS NULL)
+        OR (correction_session_id IS NOT NULL AND accepted_at_export IS TRUE
+            AND accepted_index_at_export IS NOT NULL AND accepted_index_at_export >= 0)
     ),
     CONSTRAINT ck_annotation_scores CHECK (
         (rater_1_score IS NULL OR rater_1_score >= 0)

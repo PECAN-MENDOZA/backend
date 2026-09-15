@@ -202,6 +202,13 @@ class ResearchAnnotationServiceTests {
                 .doesNotContain("sin sugerencias", "final sin ayuda", "ASSISTED", "P-00", "que tal?");
         assertThat(items).extracting(AnnotationItem::getSuggestionIndex).containsExactlyInAnyOrder(2, 0, 0);
         assertThat(items).allMatch(item -> item.getRun() != null && item.getCorrectionSession() != null);
+        // Acceptance is frozen in the item at batch creation: later feedback changes never alter TAS accepted.
+        assertThat(items).extracting(AnnotationItem::getCorrectionSession, AnnotationItem::getAcceptedAtExport,
+                        AnnotationItem::getAcceptedIndexAtExport)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(accepted, true, 2),
+                        org.assertj.core.groups.Tuple.tuple(rejected, false, null),
+                        org.assertj.core.groups.Tuple.tuple(unanswered, false, null));
     }
 
     @Test
@@ -269,7 +276,7 @@ class ResearchAnnotationServiceTests {
         stubResearcher();
         when(batchRepository.findByIdAndStudyId(batch.getId(), studyId)).thenReturn(Optional.of(batch));
         when(itemRepository.findByBatchIdOrderByPositionAsc(batch.getId())).thenReturn(List.of(
-                new AnnotationItem(batch, "T-AAAAAAAA", 0, completedRun(1, ExperimentCondition.ASSISTED, "x"), null, null)));
+                new AnnotationItem(batch, "T-AAAAAAAA", 0, completedRun(1, ExperimentCondition.ASSISTED, "x"), null, null, null)));
 
         assertThatThrownBy(() -> service.export(researcherId, studyId, batch.getId()))
                 .isInstanceOf(ConflictException.class);
@@ -648,7 +655,7 @@ class ResearchAnnotationServiceTests {
         List<AnnotationItem> items = new ArrayList<>();
         for (int i = 0; i < texts.length; i++) {
             ExperimentRun run = completedRun(i + 1, ExperimentCondition.ASSISTED, texts[i]);
-            items.add(new AnnotationItem(batch, "T-ORTHOGR" + (char) ('A' + i), i, run, null, null));
+            items.add(new AnnotationItem(batch, "T-ORTHOGR" + (char) ('A' + i), i, run, null, null, null));
         }
         return fixture(batch, items);
     }
@@ -659,8 +666,8 @@ class ResearchAnnotationServiceTests {
         CorrectionSession first = session(run, "ola", "hola", List.of());
         CorrectionSession second = session(run, "ke", "que", List.of());
         List<AnnotationItem> items = List.of(
-                new AnnotationItem(batch, "T-SEMANTC2", 0, run, first, 0),
-                new AnnotationItem(batch, "T-SEMANTC3", 1, run, second, 0));
+                new AnnotationItem(batch, "T-SEMANTC2", 0, run, first, 0, null),
+                new AnnotationItem(batch, "T-SEMANTC3", 1, run, second, 0, null));
         return fixture(batch, items);
     }
 

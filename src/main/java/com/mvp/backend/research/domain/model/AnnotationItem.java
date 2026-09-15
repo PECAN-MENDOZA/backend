@@ -22,6 +22,10 @@ import lombok.NoArgsConstructor;
  * Fila de un lote: la unica correspondencia entre el codigo de muestra ciego y la ejecucion (y, en
  * lotes semanticos, la sesion de correccion y el indice de la sugerencia evaluada). Los puntajes de
  * cada ranura reflejan la ultima importacion vigente de esa ranura.
+ *
+ * <p>En un lote semantico la aceptacion queda <b>congelada</b> al crear el lote ({@code acceptedAtExport},
+ * {@code acceptedIndexAtExport}): TAS aceptada y la exportacion de analisis usan solo estos valores, nunca el
+ * estado vivo de la sesion, para que el resultado sea reproducible con el mismo lote y hash.
  */
 @Entity
 @Table(
@@ -58,6 +62,14 @@ public class AnnotationItem {
     @Column(name = "suggestion_index", updatable = false)
     private Integer suggestionIndex;
 
+    /** Solo lotes semanticos: si la sugerencia evaluada estaba aceptada por el alumno al congelar el lote. */
+    @Column(name = "accepted_at_export", updatable = false)
+    private Boolean acceptedAtExport;
+
+    /** Solo lotes semanticos: indice de la sugerencia aceptada al congelar el lote; null si no habia aceptacion. */
+    @Column(name = "accepted_index_at_export", updatable = false)
+    private Integer acceptedIndexAtExport;
+
     @Column(name = "rater_1_score")
     private Integer rater1Score;
 
@@ -73,9 +85,13 @@ public class AnnotationItem {
             int position,
             ExperimentRun run,
             CorrectionSession correctionSession,
-            Integer suggestionIndex) {
+            Integer suggestionIndex,
+            Integer acceptedIndexAtExport) {
         if ((correctionSession == null) != (suggestionIndex == null) || (suggestionIndex != null && suggestionIndex < 0)) {
             throw new IllegalArgumentException("A semantic item needs a session and a suggestion index");
+        }
+        if (acceptedIndexAtExport != null && (correctionSession == null || acceptedIndexAtExport < 0)) {
+            throw new IllegalArgumentException("Only a semantic item can freeze an accepted suggestion index");
         }
         this.id = UUID.randomUUID();
         this.batch = Objects.requireNonNull(batch);
@@ -84,6 +100,13 @@ public class AnnotationItem {
         this.run = Objects.requireNonNull(run);
         this.correctionSession = correctionSession;
         this.suggestionIndex = suggestionIndex;
+        this.acceptedAtExport = correctionSession == null ? null : acceptedIndexAtExport != null;
+        this.acceptedIndexAtExport = acceptedIndexAtExport;
+    }
+
+    /** Aceptacion congelada de la sugerencia evaluada ({@code false} en items ortograficos). */
+    public boolean isAcceptedAtExport() {
+        return Boolean.TRUE.equals(acceptedAtExport);
     }
 
     public Integer score(AnnotationSlot slot) {

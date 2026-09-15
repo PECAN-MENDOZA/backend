@@ -165,6 +165,7 @@ class ResearchResultsApiTests {
                 .andExpect(jsonPath("$.sample.participantsTotal").value(4))
                 .andExpect(jsonPath("$.sample.participantsIncluded").value(2))
                 .andExpect(jsonPath("$.sample.participantsWithIncompletePair").value(2))
+                .andExpect(jsonPath("$.sample.participantsWithoutEligibleRun").value(0))
                 .andExpect(jsonPath("$.sample.runsCompleted").value(7))
                 .andExpect(jsonPath("$.sample.runsIncluded").value(4))
                 .andExpect(jsonPath("$.sample.runsExcluded").value(1))
@@ -172,8 +173,12 @@ class ResearchResultsApiTests {
                 .andExpect(jsonPath("$.peo").doesNotExist())
                 .andExpect(jsonPath("$.tas").doesNotExist())
                 .andExpect(jsonPath("$.orthographyAnnotation.status").value("NO_BATCH"))
+                .andExpect(jsonPath("$.orthographyAnnotation.adjudicated").doesNotExist())
                 .andExpect(jsonPath("$.semanticAnnotation.status").value("NO_BATCH"))
                 .andExpect(jsonPath("$.ppm.descriptive").value(true))
+                .andExpect(jsonPath("$.ppm.participantsAnalyzed").value(2))
+                .andExpect(jsonPath("$.ppm.runsAnalyzed").value(4))
+                .andExpect(jsonPath("$.provenance.sessionsChangedAfterExport").doesNotExist())
                 .andExpect(jsonPath("$.ppm.nonInferior").doesNotExist())
                 .andExpect(jsonPath("$.ppm.paired.n").value(2))
                 .andExpect(jsonPath("$.ppm.paired.meanDelta").value(-1.5))
@@ -194,6 +199,8 @@ class ResearchResultsApiTests {
                 .andExpect(jsonPath("$.orthographyAnnotation.status").value("ADJUDICATED"))
                 .andExpect(jsonPath("$.orthographyAnnotation.batchId").value(orthographyBatch.toString()))
                 .andExpect(jsonPath("$.peo.paired.n").value(2))
+                .andExpect(jsonPath("$.peo.participantsAnalyzed").value(2))
+                .andExpect(jsonPath("$.peo.runsAnalyzed").value(4))
                 .andExpect(jsonPath("$.peo.paired.assistedMean").value(12.5))
                 .andExpect(jsonPath("$.peo.paired.unassistedMean").value(20.0))
                 .andExpect(jsonPath("$.peo.paired.meanDelta").value(-7.5))
@@ -215,6 +222,10 @@ class ResearchResultsApiTests {
                 .andExpect(jsonPath("$.tas.suggestionsEvaluated").value(2))
                 .andExpect(jsonPath("$.tas.harmfulSuggestions").value(1))
                 .andExpect(jsonPath("$.tas.pooledRate").value(50.0))
+                .andExpect(jsonPath("$.tas.pooledCi95Lower").value(org.hamcrest.Matchers.closeTo(9.4531, 1e-3)))
+                .andExpect(jsonPath("$.tas.pooledCi95Upper").value(org.hamcrest.Matchers.closeTo(90.5469, 1e-3)))
+                .andExpect(jsonPath("$.tas.participantCi95Upper").doesNotExist())
+                .andExpect(jsonPath("$.tas.runsAnalyzed").value(1))
                 .andExpect(jsonPath("$.tas.participantsEvaluated").value(1))
                 .andExpect(jsonPath("$.tas.participantsWithoutDenominator").value(1))
                 .andExpect(jsonPath("$.tas.descriptive").value(true))
@@ -224,7 +235,8 @@ class ResearchResultsApiTests {
                 .andExpect(jsonPath("$.participants[0].tas").value(50.0))
                 .andExpect(jsonPath("$.participants[0].tasAccepted").value(100.0))
                 .andExpect(jsonPath("$.participants[1].tas").doesNotExist())
-                .andExpect(jsonPath("$.provenance.datasets.length()").value(2)));
+                .andExpect(jsonPath("$.provenance.datasets.length()").value(2))
+                .andExpect(jsonPath("$.provenance.sessionsChangedAfterExport").value(0)));
 
         // The analysis export carries pseudonyms, texts and adjudicated values, never the account.
         MvcResult download = mockMvc.perform(asResearcher(researcherId, get(base + "/analysis.csv")))
@@ -235,9 +247,12 @@ class ResearchResultsApiTests {
                 .andReturn();
         String csv = new String(download.getResponse().getContentAsByteArray(), UTF_8);
         assertThat(csv).startsWith("pseudonym,condition,task,protocol_version,included,excluded,run_id,")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1,uno dos tres cuatro,1,ola mundo,\"hola, mundo\",0,true\n")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1,uno dos tres cuatro,0,ke tal,que tal,2,false\n")
-                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,5,2,uno dos tres cuatro cinco,,,,,\n")
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1," + orthographyBatch
+                        + ",uno dos tres cuatro,1,ola mundo,\"hola, mundo\",0,true," + semanticBatch + "\n")
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1," + orthographyBatch
+                        + ",uno dos tres cuatro,0,ke tal,que tal,2,false," + semanticBatch + "\n")
+                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,5,2," + orthographyBatch
+                        + ",uno dos tres cuatro cinco,,,,,,\n")
                 .contains("P-004,UNASSISTED,TASK_A,1,false,true,")
                 .doesNotContain("alumno-", "Colegio", "@lab.edu", "T-");
         assertThat(download.getResponse().getHeader("X-Content-SHA256")).matches("[0-9a-f]{64}");
@@ -267,6 +282,10 @@ class ResearchResultsApiTests {
                         .content(evaluation(0.71)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("F0.5 does not match")));
+        mockMvc.perform(asResearcher(researcherId, post(EVALUATIONS)).contentType(MediaType.APPLICATION_JSON)
+                        .content(evaluation("t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 1, 0, 0)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Precision/recall do not match TP/FP/FN"));
         mockMvc.perform(asResearcher(researcherId, get(EVALUATIONS + "/latest"))).andExpect(status().isNotFound());
 
         JsonNode created = json(mockMvc.perform(asResearcher(researcherId, post(EVALUATIONS))

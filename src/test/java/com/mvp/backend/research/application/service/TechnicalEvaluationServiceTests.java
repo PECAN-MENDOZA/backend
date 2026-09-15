@@ -106,6 +106,40 @@ class TechnicalEvaluationServiceTests {
     }
 
     @Test
+    void rejectsPrecisionOrRecallThatContradictTheCounts() {
+        // TP = 1, FP = 0, FN = 0 imply P = R = 1, not 0.8 / 0.5 (even though F0.5 matches P and R).
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 1, 0, 0)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Precision/recall do not match TP/FP/FN");
+        // Recall alone off: TP = 40, FP = 10, FN = 60 -> R = 0.4.
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 60)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Precision/recall do not match TP/FP/FN");
+        // Zero denominators: TP + FP = 0 requires P = 0; TP + FN = 0 requires R = 0.
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.5, 0.0, 0.0, 0, 0, 5)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Precision/recall do not match TP/FP/FN");
+        verify(repository, never()).save(any());
+        verify(auditRepository, never()).save(any());
+
+        // The entity enforces the same invariant on every write path.
+        assertThatThrownBy(() -> new TechnicalEvaluation("m", DATASET, "exact_token_edits_v1",
+                0.8, 0.5, 0.7142857142857143, 1, 0, 0, researcher, NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Precision/recall do not match TP/FP/FN");
+        assertThat(new TechnicalEvaluation("m", DATASET, "exact_token_edits_v1", 0.0, 0.0, 0.0, 0, 0, 5, researcher, NOW)
+                .getRecallValue()).isZero();
+        assertThat(new TechnicalEvaluation("m", DATASET, "exact_token_edits_v1", 0.0, 0.0, 0.0, 0, 0, 0, researcher, NOW)
+                .getFZeroFive()).isZero();
+        // Rounded inputs within 1e-6 pass: 2/3 as 0.666667.
+        assertThat(new TechnicalEvaluation("m", DATASET, "exact_token_edits_v1", 0.666667, 0.5,
+                TechnicalEvaluation.fZeroFive(0.666667, 0.5), 2, 1, 2, researcher, NOW).getTruePositives()).isEqualTo(2);
+    }
+
+    @Test
     void entityRejectsOutOfRangeValues() {
         assertThatThrownBy(() -> new TechnicalEvaluation("m", DATASET, "exact_token_edits_v1", 1.2, 0.5, 0.9, 1, 1, 1, researcher, NOW))
                 .isInstanceOf(IllegalArgumentException.class);

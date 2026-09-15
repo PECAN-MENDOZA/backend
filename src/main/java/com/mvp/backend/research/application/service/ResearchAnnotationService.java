@@ -176,7 +176,7 @@ public class ResearchAnnotationService {
             if (run.getFinalText() == null || run.getFinalText().isBlank()) {
                 continue;
             }
-            items.add(new AnnotationItem(batch, uniqueCode(codes), items.size(), run, null, null));
+            items.add(new AnnotationItem(batch, uniqueCode(codes), items.size(), run, null, null, null));
         }
         return items;
     }
@@ -197,8 +197,10 @@ public class ResearchAnnotationService {
             if (run == null) {
                 continue;
             }
+            // La aceptacion se congela aqui, con el contenido del lote (mismo instante que el hash exportado).
+            int accepted = SessionSuggestions.acceptedIndex(session, offered);
             items.add(new AnnotationItem(batch, uniqueCode(codes), items.size(), run, session,
-                    SessionSuggestions.evaluatedIndex(session, offered)));
+                    SessionSuggestions.evaluatedIndex(session, offered), accepted >= 0 ? accepted : null));
         }
         return items;
     }

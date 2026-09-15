@@ -462,6 +462,34 @@ class CorrectionServiceTests {
     }
 
     @Test
+    void feedbackIsClosedOnceTheExperimentRunIsNoLongerActive() {
+        var session = new CorrectionSession(student, "el nino iva", assistedRun);
+        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
+        assistedRun.complete("el nino iba", 30_000L, UUID.randomUUID(), Instant.parse("2026-09-14T10:05:00Z"));
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest("el nino iba", true, null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Feedback is closed for this experiment run");
+        assertThatThrownBy(() -> correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest("el nino iba", false, null, "UNDO")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Feedback is closed for this experiment run");
+
+        assertThat(session.getAcceptedCorrection()).isNull();
+        assertThat(session.getFeedbackReason()).isNull();
+        verify(wordCorrectionRepository, never()).deleteByCorrectionSessionId(any());
+        verify(wordCorrectionRepository, never()).saveAll(any());
+        verify(aiCorrectionClient, never()).sendFeedback(any(), anyString(), any(), anyBoolean());
+    }
+
+    @Test
     void undoWithAcceptedTrueAndNoSuggestionIsCoercedToRejection() {
         var session = new CorrectionSession(student, "el nino iva");
         session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);

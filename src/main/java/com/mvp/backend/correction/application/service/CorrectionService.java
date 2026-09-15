@@ -167,6 +167,11 @@ public class CorrectionService {
         requireStudent(studentId);
         var session = sessionRepository.findByIdAndStudentIdForUpdate(sessionId, studentId)
                 .orElseThrow(() -> new NotFoundException("Correction session not found"));
+        // Una sesion experimental solo admite feedback mientras su ejecucion sigue ACTIVE: al terminar la
+        // ejecucion, la aceptacion queda fija (los lotes semanticos la congelan y TAS aceptada depende de ella).
+        if (session.isExperimental() && !session.getExperimentRun().isActive()) {
+            throw new BusinessException("Feedback is closed for this experiment run");
+        }
         // Valores efectivos: deshacer una sugerencia aplicada equivale a rechazarla, envie lo que envie el flag.
         boolean accepted = request.effectiveAccepted();
         String reason = request.effectiveReason();

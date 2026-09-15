@@ -28,8 +28,9 @@ import lombok.NoArgsConstructor;
 public class TechnicalEvaluation {
 
     public static final String SCORER_VERSION = "exact_token_edits_v1";
-    /** Tolerancia entre el F0.5 informado y el recalculado a partir de Precision y Recall. */
+    /** Tolerancia entre los valores informados (P, R, F0.5) y los recalculados a partir de sus estadisticos. */
     public static final double F_TOLERANCE = 1e-6;
+    public static final String COUNTS_MISMATCH = "Precision/recall do not match TP/FP/FN";
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
 
     @Id
@@ -96,6 +97,9 @@ public class TechnicalEvaluation {
         if (truePositives < 0 || falsePositives < 0 || falseNegatives < 0) {
             throw new IllegalArgumentException("TP, FP and FN must be non-negative");
         }
+        if (!countsConsistent(precision, recall, truePositives, falsePositives, falseNegatives)) {
+            throw new IllegalArgumentException(COUNTS_MISMATCH);
+        }
         if (Math.abs(fZeroFive(precision, recall) - fZeroFive) > F_TOLERANCE) {
             throw new IllegalArgumentException("F0.5 does not match precision and recall");
         }
@@ -117,6 +121,21 @@ public class TechnicalEvaluation {
         if (Double.isNaN(value) || value < 0.0 || value > 1.0) {
             throw new IllegalArgumentException(name + " must be between 0 and 1");
         }
+    }
+
+    /**
+     * P y R deben reproducirse desde los conteos: {@code P = TP / (TP + FP)} y {@code R = TP / (TP + FN)} dentro
+     * de {@link #F_TOLERANCE}; con denominador 0 el valor informado debe ser exactamente 0 (convencion documentada).
+     */
+    public static boolean countsConsistent(double precision, double recall, int tp, int fp, int fn) {
+        return matchesRatio(precision, tp, tp + fp) && matchesRatio(recall, tp, tp + fn);
+    }
+
+    private static boolean matchesRatio(double reported, int numerator, int denominator) {
+        if (denominator == 0) {
+            return reported == 0.0;
+        }
+        return Math.abs((double) numerator / denominator - reported) <= F_TOLERANCE;
     }
 
     /** {@code F0.5 = 1.25 * P * R / (0.25 * P + R)}; 0 cuando ambos son 0 (denominador nulo). */

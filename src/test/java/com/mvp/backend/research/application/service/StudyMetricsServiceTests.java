@@ -205,6 +205,53 @@ class StudyMetricsServiceTests {
         assertThat(StudyMetricsService.relativeReduction(0.0, 0.0)).isNull();
     }
 
+    @Test
+    void wilsonIntervalOnAPooledProportionInPercent() {
+        // z = 1.959964, z^2 = 3.841459. 0/40: center = (z^2/80)/(1 + z^2/40) = 0.043811, half = z^2/(80 (1 + z^2/40))
+        // = 0.043811 -> [0, 8.762 %]. 2/4: center 0.5, half = z/(1 + z^2/4) * sqrt(1/16 + z^2/64) = 0.349961 -> [15.0, 85.0].
+        StudyMetricsService.WilsonInterval none = StudyMetricsService.wilson(0, 40);
+        assertThat(none.lower()).isEqualTo(0.0);
+        assertThat(none.upper()).isCloseTo(8.762160, within(1e-5));
+        StudyMetricsService.WilsonInterval half = StudyMetricsService.wilson(2, 4);
+        assertThat(half.lower()).isCloseTo(15.0, within(0.1));
+        assertThat(half.upper()).isCloseTo(85.0, within(0.1));
+        assertThat(half.lower()).isCloseTo(15.003899, within(1e-5));
+        assertThat(half.upper()).isCloseTo(84.996101, within(1e-5));
+        // Bounds are clamped to [0, 100] (1/1 is exactly 100 at the top; 0/2 is 0 at the bottom, not -5e-15).
+        assertThat(StudyMetricsService.wilson(1, 1).upper()).isEqualTo(100.0);
+        assertThat(StudyMetricsService.wilson(0, 2).lower()).isEqualTo(0.0);
+        assertThat(StudyMetricsService.wilson(0, 0).lower()).isNull();
+        assertThat(StudyMetricsService.wilson(0, 0).upper()).isNull();
+    }
+
+    @Test
+    void thresholdsThatFailValidationAreTreatedAsUnset() {
+        // The record refuses them at startup; a programmatic instance (mock) must still not publish criterion flags.
+        ResearchProperties invalid = org.mockito.Mockito.mock(ResearchProperties.class);
+        when(invalid.ppmNonInferiorityMargin()).thenReturn(0.0);
+        when(invalid.tasLimit()).thenReturn(150.0);
+        service = newService(invalid);
+        ExperimentRun p1Assisted = completedRun(1, ExperimentCondition.ASSISTED, "final uno", 60_000);
+        ExperimentRun p1Unassisted = completedRun(1, ExperimentCondition.UNASSISTED, "final uno sin", 60_000);
+        stubStudyRuns(p1Assisted, p1Unassisted);
+        CorrectionSession evaluated = session(p1Assisted, "ola", "hola", List.of());
+        when(sessionRepository.findByExperimentRunIdInOrderByCreatedAtAsc(anyCollection())).thenReturn(List.of(evaluated));
+        AnnotationBatch batch = batch(AnnotationKind.SEMANTIC, NOW.minusSeconds(60));
+        stubBatch(batch, List.of(semanticItem(batch, 0, p1Assisted, evaluated, 0, null, 2)), adjudicatedImports(batch));
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(batch));
+
+        StudyResultsResponse results = service.results(researcherId, studyId);
+
+        assertThat(results.ppm().descriptive()).isTrue();
+        assertThat(results.ppm().nonInferiorityMargin()).isNull();
+        assertThat(results.ppm().nonInferior()).isNull();
+        assertThat(results.tas().descriptive()).isTrue();
+        assertThat(results.tas().limit()).isNull();
+        assertThat(results.tas().upperCiBelowLimit()).isNull();
+        assertThat(results.provenance().ppmNonInferiorityMargin()).isNull();
+        assertThat(results.provenance().tasLimit()).isNull();
+    }
+
     // ---------------------------------------------------------------- sampling
 
     @Test
@@ -216,23 +263,31 @@ class StudyMetricsServiceTests {
         ExperimentRun p3Unassisted = completedRun(3, ExperimentCondition.UNASSISTED, "texto excluido", 60_000);
         p3Unassisted.exclude("Excluded for a documented reason", researcher, NOW);
         ExperimentRun p4Pending = pendingRun(4, ExperimentCondition.UNASSISTED);
+        // P-005 completed one run but it was excluded: no eligible run at all.
+        ExperimentRun p5Excluded = completedRun(5, ExperimentCondition.ASSISTED, "texto excluido", 60_000);
+        p5Excluded.exclude("Excluded for a documented reason", researcher, NOW);
         stubOwnedStudy();
         when(participantRepository.findByStudyIdOrderByPseudonymAsc(studyId)).thenReturn(participants);
         when(runRepository.findByParticipantStudyIdOrderByCreatedAtAsc(studyId))
-                .thenReturn(List.of(p1Assisted, p1Unassisted, p2Assisted, p3Assisted, p3Unassisted, p4Pending));
+                .thenReturn(List.of(p1Assisted, p1Unassisted, p2Assisted, p3Assisted, p3Unassisted, p4Pending, p5Excluded));
         when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of());
         lenient().when(sessionRepository.findByExperimentRunIdInOrderByCreatedAtAsc(anyCollection())).thenReturn(List.of());
 
         StudyResultsResponse results = service.results(researcherId, studyId);
 
         assertThat(results.studyId()).isEqualTo(studyId);
-        assertThat(results.sample().participantsTotal()).isEqualTo(4);
+        // 5 = 1 included + 2 incomplete (P-002 one condition, P-003 other condition excluded) + 2 without any
+        // eligible run (P-004 never completed, P-005 only excluded).
+        assertThat(results.sample().participantsTotal()).isEqualTo(5);
         assertThat(results.sample().participantsIncluded()).isEqualTo(1);
         assertThat(results.sample().participantsWithIncompletePair()).isEqualTo(2);
-        assertThat(results.sample().runsCompleted()).isEqualTo(5);
+        assertThat(results.sample().participantsWithoutEligibleRun()).isEqualTo(2);
+        assertThat(results.sample().runsCompleted()).isEqualTo(6);
         assertThat(results.sample().runsIncluded()).isEqualTo(2);
-        assertThat(results.sample().runsExcluded()).isEqualTo(1);
+        assertThat(results.sample().runsExcluded()).isEqualTo(2);
         assertThat(results.sample().runsInIncompletePairs()).isEqualTo(2);
+        assertThat(results.sample().runsWithoutCountableWords()).isZero();
+        assertReconciled(results.sample());
 
         // No annotation batch: PEO and TAS stay null and the status says why; PPM needs no annotation.
         assertThat(results.peo()).isNull();
@@ -241,6 +296,8 @@ class StudyMetricsServiceTests {
         assertThat(results.tasAccepted()).isNull();
         assertThat(results.semanticAnnotation().status()).isEqualTo("NOT_APPLICABLE");
         assertThat(results.ppm().paired().n()).isEqualTo(1);
+        assertThat(results.ppm().participantsAnalyzed()).isEqualTo(1);
+        assertThat(results.ppm().runsAnalyzed()).isEqualTo(2);
         assertThat(results.ppm().paired().assistedMean()).isEqualTo(2.0);
         assertThat(results.ppm().paired().unassistedMean()).isEqualTo(5.0);
         assertThat(results.ppm().paired().meanDelta()).isEqualTo(-3.0);
@@ -255,6 +312,56 @@ class StudyMetricsServiceTests {
         assertThat(results.provenance().datasets()).isEmpty();
         assertThat(results.provenance().computedAt()).isEqualTo(NOW);
         assertThat(results.toString()).doesNotContain("student-real-name", "Colegio", "@");
+    }
+
+    @Test
+    void peoExcludesPunctuationOnlyRunsWhilePpmCountsThemAsZero() {
+        // P-001's assisted text has no countable words: PPM = 0 for that run, PEO undefined for the participant.
+        ExperimentRun p1Assisted = completedRun(1, ExperimentCondition.ASSISTED, "... !!!", 60_000);
+        ExperimentRun p1Unassisted = completedRun(1, ExperimentCondition.UNASSISTED, words(10), 60_000);
+        ExperimentRun p2Assisted = completedRun(2, ExperimentCondition.ASSISTED, words(5), 60_000);
+        ExperimentRun p2Unassisted = completedRun(2, ExperimentCondition.UNASSISTED, words(10), 60_000);
+        stubStudyRuns(p1Assisted, p1Unassisted, p2Assisted, p2Unassisted);
+        // The orthography batch does not need to cover the wordless run: PEO never uses it.
+        AnnotationBatch batch = batch(AnnotationKind.ORTHOGRAPHY, NOW.minusSeconds(60));
+        stubBatch(batch, List.of(
+                orthographyItem(batch, 0, p1Unassisted, 2),
+                orthographyItem(batch, 1, p2Assisted, 1),
+                orthographyItem(batch, 2, p2Unassisted, 4)), adjudicatedImports(batch));
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(batch));
+
+        StudyResultsResponse results = service.results(researcherId, studyId);
+
+        assertThat(results.sample().participantsIncluded()).isEqualTo(2);
+        assertThat(results.sample().runsIncluded()).isEqualTo(4);
+        assertThat(results.sample().runsWithoutCountableWords()).isEqualTo(1);
+        assertReconciled(results.sample());
+
+        // PPM keeps both participants: P-001 0 vs 10 (delta -10), P-002 5 vs 10 (delta -5).
+        assertThat(results.ppm().participantsAnalyzed()).isEqualTo(2);
+        assertThat(results.ppm().runsAnalyzed()).isEqualTo(4);
+        assertThat(results.ppm().paired().n()).isEqualTo(2);
+        assertThat(results.ppm().paired().assistedMean()).isEqualTo(2.5);
+        assertThat(results.ppm().paired().unassistedMean()).isEqualTo(10.0);
+        assertThat(results.ppm().paired().meanDelta()).isEqualTo(-7.5);
+
+        // PEO only has P-002: 1/5 = 20 vs 4/10 = 40 -> delta -20, relative reduction 50.
+        assertThat(results.orthographyAnnotation().status()).isEqualTo("ADJUDICATED");
+        assertThat(results.peo().participantsAnalyzed()).isEqualTo(1);
+        assertThat(results.peo().participantsWithoutCountableWords()).isEqualTo(1);
+        assertThat(results.peo().runsAnalyzed()).isEqualTo(2);
+        assertThat(results.peo().paired().n()).isEqualTo(1);
+        assertThat(results.peo().paired().meanDelta()).isEqualTo(-20.0);
+        assertThat(results.peo().relativeReductionMean()).isEqualTo(50.0);
+        assertThat(results.participants()).extracting(
+                StudyResultsResponse.ParticipantResult::pseudonym,
+                StudyResultsResponse.ParticipantResult::peoAssisted,
+                StudyResultsResponse.ParticipantResult::peoDelta,
+                StudyResultsResponse.ParticipantResult::ppmAssisted,
+                StudyResultsResponse.ParticipantResult::ppmDelta)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("P-001", null, null, 0.0, -10.0),
+                        org.assertj.core.groups.Tuple.tuple("P-002", 20.0, -20.0, 5.0, -5.0));
     }
 
     @Test
@@ -275,33 +382,44 @@ class StudyMetricsServiceTests {
         ExperimentRun p2Unassisted = completedRun(2, ExperimentCondition.UNASSISTED, "uno dos", 60_000);
         stubStudyRuns(p1Assisted, p1Unassisted, p2Assisted, p2Unassisted);
 
-        // Batch with two raters but no adjudication.
-        AnnotationBatch ratersOnly = batch(AnnotationKind.ORTHOGRAPHY, NOW.minusSeconds(300));
-        List<AnnotationItem> ratersOnlyItems = List.of(
-                orthographyItem(ratersOnly, 0, p1Assisted, null), orthographyItem(ratersOnly, 1, p1Unassisted, null),
-                orthographyItem(ratersOnly, 2, p2Assisted, null), orthographyItem(ratersOnly, 3, p2Unassisted, null));
-        stubBatch(ratersOnly, ratersOnlyItems, raterImports(ratersOnly));
-        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(ratersOnly));
-
-        StudyResultsResponse notAdjudicated = service.results(researcherId, studyId);
-        assertThat(notAdjudicated.peo()).isNull();
-        assertThat(notAdjudicated.orthographyAnnotation().status()).isEqualTo("NOT_ADJUDICATED");
-        assertThat(notAdjudicated.orthographyAnnotation().batchId()).isNull();
-        assertThat(notAdjudicated.provenance().datasets()).isEmpty();
-
-        // An older adjudicated batch that misses P-002's runs (created before they completed).
+        // An adjudicated batch that misses P-002's runs (created before they completed).
         AnnotationBatch partial = batch(AnnotationKind.ORTHOGRAPHY, NOW.minusSeconds(600));
         List<AnnotationItem> partialItems = List.of(
                 orthographyItem(partial, 0, p1Assisted, 1), orthographyItem(partial, 1, p1Unassisted, 2));
         stubBatch(partial, partialItems, adjudicatedImports(partial));
-        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(ratersOnly, partial));
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(partial));
 
         StudyResultsResponse incomplete = service.results(researcherId, studyId);
         assertThat(incomplete.peo()).isNull();
         assertThat(incomplete.orthographyAnnotation().status()).isEqualTo("INCOMPLETE_COVERAGE");
         assertThat(incomplete.orthographyAnnotation().batchId()).isEqualTo(partial.getId());
-        assertThat(incomplete.orthographyAnnotation().message()).contains("2 of 4");
+        assertThat(incomplete.orthographyAnnotation().message()).contains("2 of 4").contains("create and adjudicate");
         assertThat(incomplete.participants()).allSatisfy(row -> assertThat(row.peoAssisted()).isNull());
+
+        // A newer batch with two raters but no adjudication: the status names it instead of asking for another batch.
+        AnnotationBatch ratersOnly = batch(AnnotationKind.ORTHOGRAPHY, NOW.minusSeconds(300));
+        List<AnnotationItem> ratersOnlyItems = List.of(
+                orthographyItem(ratersOnly, 0, p1Assisted, null), orthographyItem(ratersOnly, 1, p1Unassisted, null),
+                orthographyItem(ratersOnly, 2, p2Assisted, null), orthographyItem(ratersOnly, 3, p2Unassisted, null));
+        stubBatch(ratersOnly, ratersOnlyItems, raterImports(ratersOnly));
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(ratersOnly, partial));
+
+        StudyResultsResponse notAdjudicated = service.results(researcherId, studyId);
+        assertThat(notAdjudicated.peo()).isNull();
+        assertThat(notAdjudicated.orthographyAnnotation().status()).isEqualTo("NOT_ADJUDICATED");
+        assertThat(notAdjudicated.orthographyAnnotation().batchId()).isEqualTo(ratersOnly.getId());
+        assertThat(notAdjudicated.orthographyAnnotation().exportSha256()).isEqualTo(ratersOnly.getExportSha256());
+        assertThat(notAdjudicated.orthographyAnnotation().adjudicationImportId()).isNull();
+        assertThat(notAdjudicated.orthographyAnnotation().message())
+                .contains(ratersOnly.getId().toString())
+                .doesNotContain("create");
+        assertThat(notAdjudicated.provenance().datasets()).isEmpty();
+
+        // Without any adjudicated batch the newest batch is still the one named.
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(ratersOnly));
+        StudyResultsResponse onlyRaters = service.results(researcherId, studyId);
+        assertThat(onlyRaters.orthographyAnnotation().status()).isEqualTo("NOT_ADJUDICATED");
+        assertThat(onlyRaters.orthographyAnnotation().batchId()).isEqualTo(ratersOnly.getId());
 
         // A newer batch adjudicated over every included run: PEO is computed from it, not from the raters.
         AnnotationBatch complete = batch(AnnotationKind.ORTHOGRAPHY, NOW.minusSeconds(60));
@@ -322,12 +440,16 @@ class StudyMetricsServiceTests {
         assertThat(results.orthographyAnnotation().status()).isEqualTo("ADJUDICATED");
         assertThat(results.orthographyAnnotation().batchId()).isEqualTo(complete.getId());
         assertThat(results.peo().paired().n()).isEqualTo(2);
+        assertThat(results.peo().participantsAnalyzed()).isEqualTo(2);
+        assertThat(results.peo().participantsWithoutCountableWords()).isZero();
+        assertThat(results.peo().runsAnalyzed()).isEqualTo(4);
         assertThat(results.peo().paired().assistedMean()).isEqualTo(12.5);
         assertThat(results.peo().paired().unassistedMean()).isEqualTo(20.0);
         assertThat(results.peo().paired().meanDelta()).isEqualTo(-7.5);
         assertThat(results.peo().relativeReductionMean()).isEqualTo(37.5);
         assertThat(results.peo().relativeReductionN()).isEqualTo(1);
         assertThat(results.peo().relativeReductionSkipped()).isEqualTo(1);
+        assertReconciled(results.sample());
         assertThat(results.participants()).extracting(
                 StudyResultsResponse.ParticipantResult::pseudonym,
                 StudyResultsResponse.ParticipantResult::peoAssisted,
@@ -427,11 +549,12 @@ class StudyMetricsServiceTests {
                 .thenReturn(List.of(acceptedHarmful, rejectedSafe, acceptedMinor, unansweredHarmful, nothingOffered));
 
         AnnotationBatch batch = batch(AnnotationKind.SEMANTIC, NOW.minusSeconds(60));
+        // Acceptance is frozen in the item (index of the accepted suggestion at export, null when not accepted).
         List<AnnotationItem> items = List.of(
-                semanticItem(batch, 0, p1Assisted, acceptedHarmful, 1, 0),
-                semanticItem(batch, 1, p1Assisted, rejectedSafe, 0, 2),
-                semanticItem(batch, 2, p1Assisted, acceptedMinor, 0, 1),
-                semanticItem(batch, 3, p2Assisted, unansweredHarmful, 0, 0));
+                semanticItem(batch, 0, p1Assisted, acceptedHarmful, 1, 1, 0),
+                semanticItem(batch, 1, p1Assisted, rejectedSafe, 0, null, 2),
+                semanticItem(batch, 2, p1Assisted, acceptedMinor, 0, 0, 1),
+                semanticItem(batch, 3, p2Assisted, unansweredHarmful, 0, null, 0));
         stubBatch(batch, items, adjudicatedImports(batch));
         when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(batch));
 
@@ -442,11 +565,18 @@ class StudyMetricsServiceTests {
         StudyResultsResponse.TasResult tas = results.tas();
         assertThat(tas.participantsEvaluated()).isEqualTo(2);
         assertThat(tas.participantsWithoutDenominator()).isZero();
+        assertThat(tas.runsAnalyzed()).isEqualTo(2);
         assertThat(tas.suggestionsEvaluated()).isEqualTo(4);
         assertThat(tas.harmfulSuggestions()).isEqualTo(2);
         assertThat(tas.pooledRate()).isEqualTo(50.0);
+        // Wilson on 2/4 -> [15.0, 85.0] %
+        assertThat(tas.pooledCi95Lower()).isCloseTo(15.003899, within(1e-5));
+        assertThat(tas.pooledCi95Upper()).isCloseTo(84.996101, within(1e-5));
         assertThat(tas.participantMean()).isCloseTo(66.666667, within(EPS));
-        assertThat(tas.ci95Upper()).isNotNull();
+        // t interval on [33.333, 100] (n = 2, t(0.975, 1) = 12.706): [-357, 490] clamped to [0, 100], descriptive only.
+        assertThat(tas.participantSd()).isCloseTo(47.140452, within(EPS));
+        assertThat(tas.participantCi95Lower()).isEqualTo(0.0);
+        assertThat(tas.participantCi95Upper()).isEqualTo(100.0);
         assertThat(tas.descriptive()).isTrue();
         assertThat(tas.limit()).isNull();
         assertThat(tas.upperCiBelowLimit()).isNull();
@@ -455,11 +585,15 @@ class StudyMetricsServiceTests {
         StudyResultsResponse.TasResult accepted = results.tasAccepted();
         assertThat(accepted.participantsEvaluated()).isEqualTo(1);
         assertThat(accepted.participantsWithoutDenominator()).isEqualTo(1);
+        assertThat(accepted.runsAnalyzed()).isEqualTo(1);
         assertThat(accepted.suggestionsEvaluated()).isEqualTo(2);
         assertThat(accepted.harmfulSuggestions()).isEqualTo(1);
         assertThat(accepted.pooledRate()).isEqualTo(50.0);
+        // Wilson on 1/2 -> [9.453, 90.547] %
+        assertThat(accepted.pooledCi95Lower()).isCloseTo(9.453120, within(1e-5));
+        assertThat(accepted.pooledCi95Upper()).isCloseTo(90.546880, within(1e-5));
         assertThat(accepted.participantMean()).isEqualTo(50.0);
-        assertThat(accepted.ci95Lower()).isNull();
+        assertThat(accepted.participantCi95Lower()).isNull();
 
         assertThat(results.participants()).extracting(
                 StudyResultsResponse.ParticipantResult::pseudonym,
@@ -470,14 +604,57 @@ class StudyMetricsServiceTests {
                         org.assertj.core.groups.Tuple.tuple("P-002", 100.0, null));
         assertThat(results.provenance().datasets()).extracting(StudyResultsResponse.Dataset::kind)
                 .containsExactly(AnnotationKind.SEMANTIC);
+        assertThat(results.provenance().sessionsChangedAfterExport()).isZero();
 
-        // With a configured limit the criterion is judged on the upper CI bound, never on the mean.
+        // With a configured limit the criterion is judged on the pooled Wilson upper bound, never on the mean:
+        // TAS 85.0 < 90 (true); TAS accepted 90.55 > 90 (false, even though the mean is 50).
         service = newService(new ResearchProperties(Duration.ofMinutes(30), null, 90.0));
         StudyResultsResponse limited = service.results(researcherId, studyId);
         assertThat(limited.tas().descriptive()).isFalse();
         assertThat(limited.tas().limit()).isEqualTo(90.0);
-        assertThat(limited.tas().upperCiBelowLimit()).isFalse();
-        assertThat(limited.tasAccepted().upperCiBelowLimit()).isNull();
+        assertThat(limited.tas().upperCiBelowLimit()).isTrue();
+        assertThat(limited.tasAccepted().upperCiBelowLimit()).isFalse();
+
+        // The student later changes the live feedback: the frozen values still drive TAS accepted, and the
+        // provenance reports how many evaluated sessions no longer match their export state.
+        rejectedSafe.registerFeedback("que", null, true, 1, null);
+        StudyResultsResponse after = service.results(researcherId, studyId);
+        assertThat(after.tasAccepted().suggestionsEvaluated()).isEqualTo(2);
+        assertThat(after.tasAccepted().harmfulSuggestions()).isEqualTo(1);
+        assertThat(after.participants().get(0).tasAccepted()).isEqualTo(50.0);
+        assertThat(after.provenance().sessionsChangedAfterExport()).isEqualTo(1);
+    }
+
+    @Test
+    void tasLimitIsJudgedOnThePooledWilsonUpperBound() {
+        // 40 evaluated suggestions, none harmful: Wilson upper bound 8.76 % < limit 10 even with a single participant.
+        service = newService(new ResearchProperties(Duration.ofMinutes(30), null, 10.0));
+        ExperimentRun p1Assisted = completedRun(1, ExperimentCondition.ASSISTED, "final uno", 60_000);
+        ExperimentRun p1Unassisted = completedRun(1, ExperimentCondition.UNASSISTED, "final uno sin", 60_000);
+        stubStudyRuns(p1Assisted, p1Unassisted);
+        List<CorrectionSession> sessions = new ArrayList<>();
+        AnnotationBatch batch = batch(AnnotationKind.SEMANTIC, NOW.minusSeconds(60));
+        List<AnnotationItem> items = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            CorrectionSession session = session(p1Assisted, "ola" + i, "hola" + i, List.of());
+            sessions.add(session);
+            items.add(semanticItem(batch, i, p1Assisted, session, 0, null, 2));
+        }
+        when(sessionRepository.findByExperimentRunIdInOrderByCreatedAtAsc(anyCollection())).thenReturn(sessions);
+        stubBatch(batch, items, adjudicatedImports(batch));
+        when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(batch));
+
+        StudyResultsResponse.TasResult tas = service.results(researcherId, studyId).tas();
+
+        assertThat(tas.suggestionsEvaluated()).isEqualTo(40);
+        assertThat(tas.harmfulSuggestions()).isZero();
+        assertThat(tas.pooledRate()).isZero();
+        assertThat(tas.pooledCi95Lower()).isEqualTo(0.0);
+        assertThat(tas.pooledCi95Upper()).isCloseTo(8.76, within(0.01));
+        assertThat(tas.participantsEvaluated()).isEqualTo(1);
+        assertThat(tas.participantCi95Upper()).isNull();
+        assertThat(tas.descriptive()).isFalse();
+        assertThat(tas.upperCiBelowLimit()).isTrue();
     }
 
     @Test
@@ -490,7 +667,7 @@ class StudyMetricsServiceTests {
         when(sessionRepository.findByExperimentRunIdInOrderByCreatedAtAsc(anyCollection()))
                 .thenReturn(List.of(evaluated, later));
         AnnotationBatch batch = batch(AnnotationKind.SEMANTIC, NOW.minusSeconds(60));
-        stubBatch(batch, List.of(semanticItem(batch, 0, p1Assisted, evaluated, 0, 0)), adjudicatedImports(batch));
+        stubBatch(batch, List.of(semanticItem(batch, 0, p1Assisted, evaluated, 0, null, 0)), adjudicatedImports(batch));
         when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(batch));
 
         StudyResultsResponse results = service.results(researcherId, studyId);
@@ -523,25 +700,34 @@ class StudyMetricsServiceTests {
                 adjudicatedImports(orthography));
         AnnotationBatch semantic = batch(AnnotationKind.SEMANTIC, NOW.minusSeconds(60));
         stubBatch(semantic, List.of(
-                semanticItem(semantic, 0, p1Assisted, accepted, 1, 0),
-                semanticItem(semantic, 1, p1Assisted, rejected, 0, 2)), adjudicatedImports(semantic));
+                semanticItem(semantic, 0, p1Assisted, accepted, 1, 1, 0),
+                semanticItem(semantic, 1, p1Assisted, rejected, 0, null, 2)), adjudicatedImports(semantic));
         when(batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId)).thenReturn(List.of(semantic, orthography));
 
         AnnotationCsvFile file = service.analysisCsv(researcherId, studyId);
         String csv = new String(file.bytes(), UTF_8);
 
         assertThat(file.filename()).endsWith(".csv");
+        String orthographyId = orthography.getId().toString();
+        String semanticId = semantic.getId().toString();
         assertThat(csv).startsWith("pseudonym,condition,task,protocol_version,included,excluded,run_id,duration_ms,"
-                + "word_count,orthography_errors,final_text,suggestion_index,original_text,suggestion,semantic_score,accepted\n");
-        assertThat(csv).contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1, =uno dos,1,ola,Hola,0,true\n")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1, =uno dos,0,ke,que,2,false\n")
-                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,2,0,\"tres, \"\"cuatro\"\"\",,,,,\n")
-                .contains("P-002,ASSISTED,TASK_A,1,false,false," + p2Assisted.getId() + ",60000,1,,incompleto,,,,,\n");
+                + "word_count,orthography_errors,orthography_batch_id,final_text,suggestion_index,original_text,suggestion,"
+                + "semantic_score,accepted,semantic_batch_id\n");
+        // The accepted column is the value frozen in the semantic item, not the live session state.
+        rejected.registerFeedback("que", null, true, 1, null);
+        csv = new String(service.analysisCsv(researcherId, studyId).bytes(), UTF_8);
+        assertThat(csv).contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1," + orthographyId
+                        + ", =uno dos,1,ola,Hola,0,true," + semanticId + "\n")
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1," + orthographyId
+                        + ", =uno dos,0,ke,que,2,false," + semanticId + "\n")
+                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,2,0," + orthographyId
+                        + ",\"tres, \"\"cuatro\"\"\",,,,,,\n")
+                .contains("P-002,ASSISTED,TASK_A,1,false,false," + p2Assisted.getId() + ",60000,1,,,incompleto,,,,,,\n");
         assertThat(csv).doesNotContain("student-real-name", "Colegio", "T-");
         assertThat(file.sha256()).hasSize(64);
 
         ArgumentCaptor<ResearchAuditEvent> events = ArgumentCaptor.forClass(ResearchAuditEvent.class);
-        verify(auditRepository).save(events.capture());
+        verify(auditRepository, org.mockito.Mockito.times(2)).save(events.capture());
         assertThat(events.getValue().getAction()).isEqualTo("STUDY_RESULTS_EXPORTED");
         assertThat(String.valueOf(events.getValue().getDetail())).doesNotContain("uno dos", "P-001", "ola");
     }
@@ -616,7 +802,8 @@ class StudyMetricsServiceTests {
     }
 
     private static AnnotationItem orthographyItem(AnnotationBatch batch, int position, ExperimentRun run, Integer adjudicated) {
-        AnnotationItem item = new AnnotationItem(batch, "T-" + position + batch.getId().toString().substring(0, 6), position, run, null, null);
+        AnnotationItem item = new AnnotationItem(batch, "T-" + position + batch.getId().toString().substring(0, 6), position, run,
+                null, null, null);
         if (adjudicated != null) {
             item.record(AnnotationSlot.ADJUDICATED, adjudicated);
         }
@@ -624,10 +811,21 @@ class StudyMetricsServiceTests {
     }
 
     private static AnnotationItem semanticItem(
-            AnnotationBatch batch, int position, ExperimentRun run, CorrectionSession session, int index, int adjudicated) {
-        AnnotationItem item = new AnnotationItem(batch, "T-" + position + batch.getId().toString().substring(0, 6), position, run, session, index);
+            AnnotationBatch batch, int position, ExperimentRun run, CorrectionSession session, int index,
+            Integer acceptedIndexAtExport, int adjudicated) {
+        AnnotationItem item = new AnnotationItem(batch, "T-" + position + batch.getId().toString().substring(0, 6), position, run,
+                session, index, acceptedIndexAtExport);
         item.record(AnnotationSlot.ADJUDICATED, adjudicated);
         return item;
+    }
+
+    /** Participant and run counts of the sample form auditable partitions. */
+    private static void assertReconciled(StudyResultsResponse.Sample sample) {
+        assertThat(sample.participantsTotal()).isEqualTo(sample.participantsIncluded()
+                + sample.participantsWithIncompletePair() + sample.participantsWithoutEligibleRun());
+        assertThat(sample.runsCompleted()).isEqualTo(sample.runsIncluded() + sample.runsExcluded()
+                + sample.runsInIncompletePairs());
+        assertThat(sample.runsWithoutCountableWords()).isLessThanOrEqualTo(sample.runsIncluded());
     }
 
     private List<AnnotationImport> raterImports(AnnotationBatch batch) {

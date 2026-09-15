@@ -41,9 +41,16 @@ public class TechnicalEvaluationService {
         this.clock = clock;
     }
 
-    /** Recalcula F0.5 a partir de P y R y rechaza el registro si difiere del valor enviado en mas de 1e-6. */
+    /**
+     * Recalcula P y R desde TP/FP/FN (con denominador 0 el valor enviado debe ser 0) y F0.5 desde P y R; rechaza
+     * el registro si alguno difiere del valor enviado en mas de 1e-6. La entidad repite ambas comprobaciones.
+     */
     @Transactional
     public TechnicalEvaluationResponse record(UUID researcherId, TechnicalEvaluationRequest request) {
+        if (!TechnicalEvaluation.countsConsistent(request.precision(), request.recall(), request.truePositives(),
+                request.falsePositives(), request.falseNegatives())) {
+            throw new BusinessException(TechnicalEvaluation.COUNTS_MISMATCH);
+        }
         double expected = TechnicalEvaluation.fZeroFive(request.precision(), request.recall());
         if (Math.abs(expected - request.fZeroFive()) > TechnicalEvaluation.F_TOLERANCE) {
             throw new BusinessException(String.format(java.util.Locale.ROOT,

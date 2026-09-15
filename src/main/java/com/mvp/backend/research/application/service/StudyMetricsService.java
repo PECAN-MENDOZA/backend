@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,15 +62,23 @@ import com.mvp.backend.shared.exception.NotFoundException;
 /**
  * Resultados del estudio (spec §9.4 y §11; criterios de exito §3-§5).
  *
- * <p><b>Muestra.</b> Solo ejecuciones COMPLETED no excluidas cuyo participante tiene ambas condiciones
- * ("par completo"). Varias ejecuciones de un mismo participante y condicion se promedian a un valor antes
- * de la inferencia emparejada; la unidad de analisis es el participante.
+ * <p><b>Muestra.</b> La cohorte base son los participantes con un "par completo": al menos una ejecucion
+ * COMPLETED no excluida en cada condicion, sin filtro por palabras. Cada metrica usa su propio conjunto
+ * analizable dentro de la cohorte: PPM todas las ejecuciones incluidas (sin palabras contables vale 0); PEO solo
+ * los participantes con palabras contables en ambas condiciones; TAS las ejecuciones ASSISTED con al menos una
+ * sugerencia evaluada. Varias ejecuciones de un mismo participante y condicion se promedian a un valor antes de
+ * la inferencia emparejada; la unidad de analisis es el participante. Los conteos informados forman particiones
+ * (ver {@link Sample}).
  *
  * <p><b>Formulas.</b> {@code PEO = errores ortograficos adjudicados / palabras del texto final x 100};
  * {@code PPM = palabras / (duracion_ms / 60000)}; {@code TAS = sugerencias adjudicadas con 0 / evaluadas
- * x 100}; {@code TAS aceptada = perjudiciales aceptadas / aceptadas x 100}. Diferencia emparejada
- * {@code ASSISTED - UNASSISTED}, IC 95 % con distribucion t, valor p bilateral (prueba t emparejada) y
- * d_z de Cohen = media(delta) / desviacion(delta).
+ * x 100}; {@code TAS aceptada = perjudiciales aceptadas / aceptadas x 100} (aceptacion congelada en el lote
+ * semantico, nunca el estado vivo de la sesion). Diferencia emparejada {@code ASSISTED - UNASSISTED}, IC 95 %
+ * con distribucion t, valor p bilateral (prueba t emparejada) y d_z de Cohen = media(delta) / desviacion(delta).
+ * Para TAS el intervalo inferencial es el de Wilson (z = 1.959964) sobre la proporcion agregada
+ * {@code perjudiciales / evaluadas}; el criterio {@code upperCiBelowLimit} compara su limite superior con el
+ * limite configurado. El intervalo t sobre el valor por participante se informa acotado a [0, 100] y es solo
+ * descriptivo.
  *
  * <p><b>Tokenizacion documentada</b> ({@link #WORD}): una palabra es una secuencia de letras o digitos
  * Unicode, con apostrofes o guiones internos ("l'amour", "re-hacer" cuentan una vez); la puntuacion y los
@@ -78,7 +87,9 @@ import com.mvp.backend.shared.exception.NotFoundException;
  * <p><b>Anotacion.</b> Solo puntajes ADJUDICATED del lote mas reciente de cada tipo con adjudicacion vigente
  * (resuelta sobre las importaciones de evaluador vigentes). Si no lo hay, o no cubre todas las ejecuciones
  * o sugerencias incluidas, la metrica es {@code null} y el estado explica por que; nunca se calcula con
- * datos parciales. PPM y TAS son descriptivos mientras no se configuren δPPM y el limite de TAS.
+ * datos parciales. Si el lote mas reciente del tipo aun no tiene adjudicacion vigente, el estado lo identifica
+ * ({@code NOT_ADJUDICATED}) en lugar de sugerir otro lote. PPM y TAS son descriptivos mientras no se configuren
+ * δPPM y el limite de TAS (un umbral invalido se trata como ausente).
  */
 @Service
 public class StudyMetricsService {
@@ -87,8 +98,10 @@ public class StudyMetricsService {
     public static final Pattern WORD = Pattern.compile("[^\\W_]+(?:['’\\-][^\\W_]+)*", Pattern.UNICODE_CHARACTER_CLASS);
     static final List<String> ANALYSIS_COLUMNS = List.of(
             "pseudonym", "condition", "task", "protocol_version", "included", "excluded", "run_id", "duration_ms",
-            "word_count", "orthography_errors", "final_text", "suggestion_index", "original_text", "suggestion",
-            "semantic_score", "accepted");
+            "word_count", "orthography_errors", "orthography_batch_id", "final_text", "suggestion_index", "original_text",
+            "suggestion", "semantic_score", "accepted", "semantic_batch_id");
+    /** Cuantil 0.975 de la normal estandar usado en el intervalo de Wilson. */
+    static final double Z_95 = 1.959964;
     private static final double CONFIDENCE = 0.95;
     private static final String ADJUDICATED = "ADJUDICATED";
 
@@ -190,6 +203,11 @@ public class StudyMetricsService {
         boolean inferential() {
             return lower != null;
         }
+
+        /** Version acotada a [0, 100] para tasas expresadas en porcentaje. */
+        Interval clampedToPercent() {
+            return new Interval(n, mean, sd, lower == null ? null : clampPercent(lower), upper == null ? null : clampPercent(upper));
+        }
     }
 
     static Interval interval(List<Double> values) {
@@ -209,6 +227,30 @@ public class StudyMetricsService {
         double halfWidth = new TDistribution(n - 1).inverseCumulativeProbability(1 - (1 - CONFIDENCE) / 2)
                 * sd / Math.sqrt(n);
         return new Interval(n, mean, sd, mean - halfWidth, mean + halfWidth);
+    }
+
+    /** Intervalo de Wilson (95 %) de una proporcion agregada, en porcentaje y acotado a [0, 100]. */
+    record WilsonInterval(Double lower, Double upper) {
+    }
+
+    /**
+     * Wilson score interval: {@code centro = (p + z²/2n) / (1 + z²/n)},
+     * {@code semiancho = z / (1 + z²/n) · sqrt(p(1 − p)/n + z²/4n²)}, con {@code p = successes / n} y
+     * z = {@link #Z_95}. Sin denominador ({@code n == 0}) no hay intervalo.
+     */
+    static WilsonInterval wilson(long successes, long n) {
+        if (n <= 0) {
+            return new WilsonInterval(null, null);
+        }
+        double p = (double) successes / n;
+        double z2n = Z_95 * Z_95 / n;
+        double center = (p + z2n / 2.0) / (1.0 + z2n);
+        double half = Z_95 / (1.0 + z2n) * Math.sqrt(p * (1.0 - p) / n + Z_95 * Z_95 / (4.0 * n * n));
+        return new WilsonInterval(clampPercent(100.0 * (center - half)), clampPercent(100.0 * (center + half)));
+    }
+
+    private static double clampPercent(double value) {
+        return Math.max(0.0, Math.min(100.0, value));
     }
 
     private static double mean(double[] data) {
@@ -238,20 +280,26 @@ public class StudyMetricsService {
         ResearchStudy study = requireOwnedStudy(researcherId, studyId);
         Analysis analysis = analyze(study);
         Cohort cohort = analysis.cohort();
-        Double margin = properties.ppmNonInferiorityMargin();
-        Double limit = properties.tasLimit();
+        // Defensa ante una instancia construida fuera del binding validado: un umbral invalido no publica criterios.
+        Double margin = ResearchProperties.validPpmMargin(properties.ppmNonInferiorityMargin())
+                ? properties.ppmNonInferiorityMargin() : null;
+        Double limit = ResearchProperties.validTasLimit(properties.tasLimit()) ? properties.tasLimit() : null;
 
         List<ParticipantResult> rows = new ArrayList<>();
         List<PairValue> peoPairs = new ArrayList<>();
+        int peoWithoutWords = 0;
         List<Double> reductions = new ArrayList<>();
         int reductionsSkipped = 0;
         List<PairValue> ppmPairs = new ArrayList<>();
         List<Double> tasValues = new ArrayList<>();
         int tasWithout = 0;
+        int tasRuns = 0;
         List<Double> tasAcceptedValues = new ArrayList<>();
         int tasAcceptedWithout = 0;
+        int tasAcceptedRuns = 0;
         boolean peoReady = analysis.orthography().isAdjudicated();
         boolean tasReady = analysis.semantic().isAdjudicated();
+        Map<UUID, List<EvaluatedSuggestion>> byRun = analysis.suggestionsByRun();
 
         for (ParticipantData participant : cohort.included()) {
             double ppmAssisted = participant.meanPpm(ExperimentCondition.ASSISTED);
@@ -261,7 +309,7 @@ public class StudyMetricsService {
             Double peoUnassisted = null;
             Double peoDelta = null;
             Double reduction = null;
-            if (peoReady) {
+            if (peoReady && participant.hasPeoPair()) {
                 peoAssisted = participant.meanPeo(ExperimentCondition.ASSISTED, analysis.errorsByRun());
                 peoUnassisted = participant.meanPeo(ExperimentCondition.UNASSISTED, analysis.errorsByRun());
                 peoDelta = peoAssisted - peoUnassisted;
@@ -272,12 +320,16 @@ public class StudyMetricsService {
                 } else {
                     reductions.add(reduction);
                 }
+            } else if (peoReady) {
+                peoWithoutWords++;
             }
             Double tas = null;
             Double tasAccepted = null;
             if (tasReady) {
-                tas = participant.meanRate(analysis.suggestionsByRun(), false);
-                tasAccepted = participant.meanRate(analysis.suggestionsByRun(), true);
+                tas = participant.meanRate(byRun, false);
+                tasAccepted = participant.meanRate(byRun, true);
+                tasRuns += participant.tasRuns(byRun, false);
+                tasAcceptedRuns += participant.tasRuns(byRun, true);
                 if (tas == null) {
                     tasWithout++;
                 } else {
@@ -298,33 +350,38 @@ public class StudyMetricsService {
             PairedSummary paired = pairedSummary(peoPairs);
             Double reductionMean = reductions.isEmpty() ? null : mean(reductions.stream().mapToDouble(d -> d).toArray());
             Boolean upperBelowZero = paired.ci95Upper() == null ? null : paired.ci95Upper() < 0;
-            peo = new PeoResult(paired, reductionMean, reductions.size(), reductionsSkipped, upperBelowZero);
+            peo = new PeoResult(paired, peoPairs.size(), peoWithoutWords, cohort.peoRuns().size(), reductionMean,
+                    reductions.size(), reductionsSkipped, upperBelowZero);
         }
         PpmResult ppm = null;
         if (!ppmPairs.isEmpty()) {
             PairedSummary paired = pairedSummary(ppmPairs);
             Boolean nonInferior = margin == null || paired.ci95Lower() == null ? null : paired.ci95Lower() > -margin;
-            ppm = new PpmResult(paired, margin == null, margin, nonInferior);
+            ppm = new PpmResult(paired, ppmPairs.size(), cohort.includedRuns().size(), margin == null, margin, nonInferior);
         }
         TasResult tas = null;
         TasResult tasAccepted = null;
         if (tasReady) {
             List<EvaluatedSuggestion> all = analysis.includedSuggestions();
-            tas = tasResult(tasValues, tasWithout, all.size(), all.stream().filter(EvaluatedSuggestion::harmful).count(), limit);
-            List<EvaluatedSuggestion> accepted = all.stream().filter(EvaluatedSuggestion::accepted).toList();
-            tasAccepted = tasResult(tasAcceptedValues, tasAcceptedWithout, accepted.size(),
+            tas = tasResult(tasValues, tasWithout, tasRuns, all.size(),
+                    all.stream().filter(EvaluatedSuggestion::harmful).count(), limit);
+            List<EvaluatedSuggestion> accepted = all.stream().filter(EvaluatedSuggestion::isAccepted).toList();
+            tasAccepted = tasResult(tasAcceptedValues, tasAcceptedWithout, tasAcceptedRuns, accepted.size(),
                     accepted.stream().filter(EvaluatedSuggestion::harmful).count(), limit);
         }
         return new StudyResultsResponse(study.getId(), study.getCode(), study.getTitle(), cohort.sample(), peo, ppm,
                 tas, tasAccepted, analysis.orthography(), analysis.semantic(), rows, provenance(analysis, margin, limit));
     }
 
-    private static TasResult tasResult(List<Double> values, int without, long evaluated, long harmful, Double limit) {
-        Interval interval = interval(values);
+    /** El criterio se juzga sobre el limite superior de Wilson de la proporcion agregada; el IC t es descriptivo. */
+    private static TasResult tasResult(List<Double> values, int without, int runs, long evaluated, long harmful, Double limit) {
+        Interval participants = interval(values).clampedToPercent();
         Double pooled = evaluated == 0 ? null : 100.0 * harmful / evaluated;
-        Boolean belowLimit = limit == null || interval.upper() == null ? null : interval.upper() < limit;
-        return new TasResult(interval.n(), without, evaluated, harmful, pooled, interval.mean(), interval.sd(),
-                interval.lower(), interval.upper(), limit == null, limit, belowLimit);
+        WilsonInterval wilson = wilson(harmful, evaluated);
+        Boolean belowLimit = limit == null || wilson.upper() == null ? null : wilson.upper() < limit;
+        return new TasResult(participants.n(), without, runs, evaluated, harmful, pooled, wilson.lower(), wilson.upper(),
+                participants.mean(), participants.sd(), participants.lower(), participants.upper(),
+                limit == null, limit, belowLimit);
     }
 
     private Provenance provenance(Analysis analysis, Double margin, Double limit) {
@@ -337,7 +394,7 @@ public class StudyMetricsService {
                 distinct(runs, ExperimentRun::getModelVersion),
                 distinct(runs, ExperimentRun::getBackendVersion),
                 distinct(runs, ExperimentRun::getAppVersion),
-                datasets, margin, limit, clock.instant());
+                datasets, margin, limit, analysis.sessionsChangedAfterExport(), clock.instant());
     }
 
     private Dataset dataset(ResolvedBatch resolved) {
@@ -356,7 +413,9 @@ public class StudyMetricsService {
     /**
      * Exportacion de analisis para los autores (una fila por ejecucion completada y sugerencia evaluada). No es
      * ciega, porque se usa despues de la adjudicacion; contiene seudonimos y texto del alumno, nunca cuentas ni
-     * identidad docente. Los puntajes provienen del lote adjudicado vigente de cada tipo (en blanco si no lo hay).
+     * identidad docente. Los puntajes provienen del lote adjudicado vigente de cada tipo (en blanco si no lo hay),
+     * identificado en {@code orthography_batch_id} / {@code semantic_batch_id}; {@code accepted} es el valor
+     * congelado en el item semantico (en blanco sin item).
      */
     @Transactional
     public AnnotationCsvFile analysisCsv(UUID researcherId, UUID studyId) {
@@ -365,6 +424,8 @@ public class StudyMetricsService {
         Analysis analysis = analyze(study);
         Cohort cohort = analysis.cohort();
         Map<UUID, Integer> errors = analysis.orthographyBatch().map(ResolvedBatch::scoresByRun).orElse(Map.of());
+        String orthographyBatchId = analysis.orthographyBatch().map(b -> b.batch().getId().toString()).orElse("");
+        String semanticBatchId = analysis.semanticBatch().map(b -> b.batch().getId().toString()).orElse("");
         List<List<String>> rows = new ArrayList<>();
         for (ParticipantData participant : cohort.participants()) {
             for (ExperimentRun run : participant.completedRuns()) {
@@ -380,10 +441,11 @@ public class StudyMetricsService {
                         String.valueOf(run.getDurationMs()),
                         String.valueOf(metrics.wordCount()),
                         text(errors.get(run.getId())),
+                        errors.containsKey(run.getId()) ? orthographyBatchId : "",
                         run.getFinalText());
                 List<EvaluatedSuggestion> suggestions = analysis.suggestionsByRun().getOrDefault(run.getId(), List.of());
                 if (suggestions.isEmpty()) {
-                    rows.add(concat(base, List.of("", "", "", "", "")));
+                    rows.add(concat(base, List.of("", "", "", "", "", "")));
                 }
                 for (EvaluatedSuggestion suggestion : suggestions) {
                     rows.add(concat(base, List.of(
@@ -391,7 +453,8 @@ public class StudyMetricsService {
                             suggestion.session().getOriginalText(),
                             suggestion.text(),
                             text(suggestion.score()),
-                            String.valueOf(suggestion.accepted()))));
+                            suggestion.accepted() == null ? "" : String.valueOf(suggestion.accepted()),
+                            suggestion.score() == null ? "" : semanticBatchId)));
                 }
             }
         }
@@ -422,15 +485,20 @@ public class StudyMetricsService {
         List<ExperimentRun> runs = runRepository.findByParticipantStudyIdOrderByCreatedAtAsc(studyId);
         Cohort cohort = Cohort.of(participants, runs);
         List<AnnotationBatch> batches = batchRepository.findByStudyIdOrderByCreatedAtDesc(studyId);
+        Optional<AnnotationBatch> newestOrthography = newest(batches, AnnotationKind.ORTHOGRAPHY);
+        Optional<AnnotationBatch> newestSemantic = newest(batches, AnnotationKind.SEMANTIC);
         Optional<ResolvedBatch> orthography = currentAdjudicated(batches, AnnotationKind.ORTHOGRAPHY);
         Optional<ResolvedBatch> semantic = currentAdjudicated(batches, AnnotationKind.SEMANTIC);
-        Map<UUID, List<EvaluatedSuggestion>> suggestionsByRun = suggestionsByRun(cohort, semantic);
-        int semanticBatches = (int) batches.stream().filter(b -> b.getKind() == AnnotationKind.SEMANTIC).count();
-        int orthographyBatches = batches.size() - semanticBatches;
+        Suggestions suggestions = suggestions(cohort, semantic);
         return new Analysis(cohort, orthography, semantic,
-                orthographyStatus(cohort, orthography, orthographyBatches),
-                semanticStatus(cohort, semantic, semanticBatches, suggestionsByRun),
-                orthography.map(ResolvedBatch::scoresByRun).orElse(Map.of()), suggestionsByRun);
+                orthographyStatus(cohort, orthography, newestOrthography),
+                semanticStatus(cohort, semantic, newestSemantic, suggestions.byRun()),
+                orthography.map(ResolvedBatch::scoresByRun).orElse(Map.of()), suggestions.byRun(),
+                suggestions.changedAfterExport());
+    }
+
+    private static Optional<AnnotationBatch> newest(List<AnnotationBatch> batches, AnnotationKind kind) {
+        return batches.stream().filter(batch -> batch.getKind() == kind).findFirst();
     }
 
     /** Lote mas reciente del tipo con adjudicacion vigente (sobre los evaluadores vigentes) y completa. */
@@ -457,27 +525,30 @@ public class StudyMetricsService {
         return imports.stream().filter(i -> i.getSlot() == slot && i.isCurrent()).findFirst().orElse(null);
     }
 
-    private static AnnotationStatus orthographyStatus(Cohort cohort, Optional<ResolvedBatch> resolved, int batchCount) {
+    private static AnnotationStatus orthographyStatus(Cohort cohort, Optional<ResolvedBatch> resolved, Optional<AnnotationBatch> newest) {
         if (cohort.included().isEmpty()) {
             return status("NO_SAMPLE", null, "No participant has a complete pair of included runs");
         }
+        List<ExperimentRun> peoRuns = cohort.peoRuns();
+        if (peoRuns.isEmpty()) {
+            return status("NOT_APPLICABLE", null, "No included participant has countable words in both conditions");
+        }
         if (resolved.isEmpty()) {
-            return missingAdjudication(batchCount, "orthography");
+            return missingAdjudication(newest, "orthography");
         }
         ResolvedBatch batch = resolved.get();
         Map<UUID, Integer> scores = batch.scoresByRun();
-        long covered = cohort.includedRuns().stream().filter(run -> scores.containsKey(run.getId())).count();
-        int total = cohort.includedRuns().size();
+        long covered = peoRuns.stream().filter(run -> scores.containsKey(run.getId())).count();
+        int total = peoRuns.size();
         if (covered < total) {
-            return status("INCOMPLETE_COVERAGE", batch, covered + " of " + total
-                    + " included runs have an adjudicated orthography score in the current batch; "
-                    + "create and adjudicate a new orthography batch");
+            return pendingOrIncomplete(batch, newest, "orthography", covered, total, "included runs");
         }
         return status(ADJUDICATED, batch, "Adjudicated orthography scores cover all " + total + " included runs");
     }
 
     private static AnnotationStatus semanticStatus(
-            Cohort cohort, Optional<ResolvedBatch> resolved, int batchCount, Map<UUID, List<EvaluatedSuggestion>> byRun) {
+            Cohort cohort, Optional<ResolvedBatch> resolved, Optional<AnnotationBatch> newest,
+            Map<UUID, List<EvaluatedSuggestion>> byRun) {
         if (cohort.included().isEmpty()) {
             return status("NO_SAMPLE", null, "No participant has a complete pair of included runs");
         }
@@ -488,23 +559,41 @@ public class StudyMetricsService {
             return status("NOT_APPLICABLE", null, "The included ASSISTED runs received no suggestions to evaluate");
         }
         if (resolved.isEmpty()) {
-            return missingAdjudication(batchCount, "semantic");
+            return missingAdjudication(newest, "semantic");
         }
         long covered = included.stream().filter(s -> s.score() != null).count();
         if (covered < included.size()) {
-            return status("INCOMPLETE_COVERAGE", resolved.get(), covered + " of " + included.size()
-                    + " included suggestions have an adjudicated semantic score in the current batch; "
-                    + "create and adjudicate a new semantic batch");
+            return pendingOrIncomplete(resolved.get(), newest, "semantic", covered, included.size(), "included suggestions");
         }
         return status(ADJUDICATED, resolved.get(),
                 "Adjudicated semantic scores cover all " + included.size() + " included suggestions");
     }
 
-    private static AnnotationStatus missingAdjudication(int batchCount, String kind) {
-        return batchCount == 0
-                ? status("NO_BATCH", null, "No " + kind + " annotation batch exists for this study")
-                : status("NOT_ADJUDICATED", null, batchCount + " " + kind
-                        + " batch(es) exist but none has a current adjudication over the current rater imports");
+    private static AnnotationStatus missingAdjudication(Optional<AnnotationBatch> newest, String kind) {
+        return newest.map(batch -> notAdjudicated(batch, kind, ""))
+                .orElseGet(() -> status("NO_BATCH", null, "No " + kind + " annotation batch exists for this study"));
+    }
+
+    /**
+     * La adjudicacion vigente no cubre la muestra: si ya existe un lote mas reciente sin adjudicacion vigente, el
+     * estado lo identifica (hay que adjudicarlo, no crear otro); si no, hace falta un lote nuevo.
+     */
+    private static AnnotationStatus pendingOrIncomplete(
+            ResolvedBatch resolved, Optional<AnnotationBatch> newest, String kind, long covered, int total, String unit) {
+        String coverage = covered + " of " + total + " " + unit + " have an adjudicated " + kind + " score";
+        if (newest.isPresent() && !newest.get().getId().equals(resolved.batch().getId())) {
+            return notAdjudicated(newest.get(), kind, "; the older adjudicated batch " + resolved.batch().getId()
+                    + " is not used because only " + coverage);
+        }
+        return status("INCOMPLETE_COVERAGE", resolved, coverage + " in the current batch; create and adjudicate a new "
+                + kind + " batch");
+    }
+
+    private static AnnotationStatus notAdjudicated(AnnotationBatch batch, String kind, String detail) {
+        return new AnnotationStatus("NOT_ADJUDICATED", batch.getId(), batch.getExportSha256(), null,
+                "Batch " + batch.getId() + " is the most recent " + kind
+                        + " batch but has no current adjudication over the current rater imports; import its rater"
+                        + " and adjudication files" + detail);
     }
 
     private static AnnotationStatus status(String code, ResolvedBatch batch, String message) {
@@ -514,14 +603,23 @@ public class StudyMetricsService {
                         batch.adjudication().getId(), message);
     }
 
-    /** Sugerencias evaluables (lista ofrecida no vacia) de cada ejecucion completada, con su puntaje vigente. */
-    private Map<UUID, List<EvaluatedSuggestion>> suggestionsByRun(Cohort cohort, Optional<ResolvedBatch> semantic) {
+    /** Sugerencias evaluables por ejecucion y numero de items cuya sesion viva difiere de la aceptacion congelada. */
+    private record Suggestions(Map<UUID, List<EvaluatedSuggestion>> byRun, Integer changedAfterExport) {
+    }
+
+    /**
+     * Sugerencias evaluables (lista ofrecida no vacia) de cada ejecucion completada, con su puntaje vigente. La
+     * aceptacion proviene del item semantico congelado ({@code null} sin item): el estado vivo de la sesion solo
+     * se compara para informar {@code sessionsChangedAfterExport}.
+     */
+    private Suggestions suggestions(Cohort cohort, Optional<ResolvedBatch> semantic) {
         List<UUID> runIds = cohort.completedRuns().stream().map(ExperimentRun::getId).toList();
         if (runIds.isEmpty()) {
-            return Map.of();
+            return new Suggestions(Map.of(), semantic.isPresent() ? 0 : null);
         }
         Map<UUID, AnnotationItem> itemsBySession = semantic.map(ResolvedBatch::itemsBySession).orElse(Map.of());
         Map<UUID, List<EvaluatedSuggestion>> byRun = new LinkedHashMap<>();
+        int changed = 0;
         for (CorrectionSession session : sessionRepository.findByExperimentRunIdInOrderByCreatedAtAsc(runIds)) {
             List<String> offered = SessionSuggestions.offered(objectMapper, session);
             if (offered.isEmpty()) {
@@ -529,12 +627,18 @@ public class StudyMetricsService {
             }
             AnnotationItem item = itemsBySession.get(session.getId());
             int index = item != null ? item.getSuggestionIndex() : SessionSuggestions.evaluatedIndex(session, offered);
-            boolean accepted = SessionSuggestions.acceptedIndex(session, offered) == index;
+            Boolean accepted = item == null ? null : item.isAcceptedAtExport();
             Integer score = item == null ? null : item.getAdjudicatedScore();
+            if (item != null) {
+                int live = SessionSuggestions.acceptedIndex(session, offered);
+                if (!Objects.equals(live >= 0 ? live : null, item.getAcceptedIndexAtExport())) {
+                    changed++;
+                }
+            }
             byRun.computeIfAbsent(session.getExperimentRun().getId(), id -> new ArrayList<>())
                     .add(new EvaluatedSuggestion(session, index, offered.get(Math.min(index, offered.size() - 1)), accepted, score));
         }
-        return byRun;
+        return new Suggestions(byRun, semantic.isPresent() ? changed : null);
     }
 
     private record ResolvedBatch(AnnotationBatch batch, AnnotationImport adjudication, List<AnnotationItem> items) {
@@ -551,9 +655,14 @@ public class StudyMetricsService {
         }
     }
 
-    private record EvaluatedSuggestion(CorrectionSession session, int index, String text, boolean accepted, Integer score) {
+    /** {@code accepted} es el valor congelado en el lote semantico; {@code null} cuando no hay item. */
+    private record EvaluatedSuggestion(CorrectionSession session, int index, String text, Boolean accepted, Integer score) {
         boolean harmful() {
             return score != null && score == 0;
+        }
+
+        boolean isAccepted() {
+            return Boolean.TRUE.equals(accepted);
         }
     }
 
@@ -564,7 +673,8 @@ public class StudyMetricsService {
             AnnotationStatus orthography,
             AnnotationStatus semantic,
             Map<UUID, Integer> errorsByRun,
-            Map<UUID, List<EvaluatedSuggestion>> suggestionsByRun) {
+            Map<UUID, List<EvaluatedSuggestion>> suggestionsByRun,
+            Integer sessionsChangedAfterExport) {
 
         List<EvaluatedSuggestion> includedSuggestions() {
             return cohort.includedRuns().stream()
@@ -575,7 +685,7 @@ public class StudyMetricsService {
 
     // ------------------------------------------------------------------ cohort
 
-    /** Ejecuciones completadas de un participante, separadas en elegibles por condicion. */
+    /** Ejecuciones completadas de un participante, separadas en elegibles (no excluidas) por condicion. */
     private record ParticipantData(StudyParticipant participant, List<ExperimentRun> completedRuns,
                                    Map<ExperimentCondition, List<ExperimentRun>> eligible) {
 
@@ -590,6 +700,22 @@ public class StudyMetricsService {
             return runs;
         }
 
+        /** Ejecuciones con palabras contables (denominador de PEO definido). */
+        List<ExperimentRun> peoRuns(ExperimentCondition condition) {
+            return eligible.get(condition).stream().filter(run -> wordCount(run.getFinalText()) > 0).toList();
+        }
+
+        boolean hasPeoPair() {
+            return !peoRuns(ExperimentCondition.ASSISTED).isEmpty() && !peoRuns(ExperimentCondition.UNASSISTED).isEmpty();
+        }
+
+        List<ExperimentRun> peoRuns() {
+            List<ExperimentRun> runs = new ArrayList<>(peoRuns(ExperimentCondition.ASSISTED));
+            runs.addAll(peoRuns(ExperimentCondition.UNASSISTED));
+            return runs;
+        }
+
+        /** PPM sobre todas las ejecuciones elegibles: una sin palabras contables vale 0. */
         double meanPpm(ExperimentCondition condition) {
             return eligible.get(condition).stream()
                     .mapToDouble(run -> runMetrics(run.getFinalText(), run.getDurationMs(), 0).ppm())
@@ -597,7 +723,7 @@ public class StudyMetricsService {
         }
 
         double meanPeo(ExperimentCondition condition, Map<UUID, Integer> errorsByRun) {
-            return eligible.get(condition).stream()
+            return peoRuns(condition).stream()
                     .mapToDouble(run -> runMetrics(run.getFinalText(), run.getDurationMs(), errorsByRun.get(run.getId())).peo())
                     .average().orElseThrow();
         }
@@ -606,14 +732,26 @@ public class StudyMetricsService {
         Double meanRate(Map<UUID, List<EvaluatedSuggestion>> byRun, boolean acceptedOnly) {
             List<Double> rates = new ArrayList<>();
             for (ExperimentRun run : eligible.get(ExperimentCondition.ASSISTED)) {
-                List<EvaluatedSuggestion> suggestions = byRun.getOrDefault(run.getId(), List.of()).stream()
-                        .filter(s -> !acceptedOnly || s.accepted())
-                        .toList();
+                List<EvaluatedSuggestion> suggestions = tasSuggestions(byRun, run, acceptedOnly);
                 if (!suggestions.isEmpty()) {
                     rates.add(100.0 * suggestions.stream().filter(EvaluatedSuggestion::harmful).count() / suggestions.size());
                 }
             }
             return rates.isEmpty() ? null : rates.stream().mapToDouble(d -> d).average().orElseThrow();
+        }
+
+        /** Ejecuciones ASSISTED con al menos una sugerencia evaluada (o aceptada). */
+        int tasRuns(Map<UUID, List<EvaluatedSuggestion>> byRun, boolean acceptedOnly) {
+            return (int) eligible.get(ExperimentCondition.ASSISTED).stream()
+                    .filter(run -> !tasSuggestions(byRun, run, acceptedOnly).isEmpty())
+                    .count();
+        }
+
+        private static List<EvaluatedSuggestion> tasSuggestions(
+                Map<UUID, List<EvaluatedSuggestion>> byRun, ExperimentRun run, boolean acceptedOnly) {
+            return byRun.getOrDefault(run.getId(), List.of()).stream()
+                    .filter(s -> !acceptedOnly || s.isAccepted())
+                    .toList();
         }
     }
 
@@ -630,17 +768,14 @@ public class StudyMetricsService {
 
             List<ParticipantData> participants = new ArrayList<>();
             int runsExcluded = 0;
-            int runsWithoutWords = 0;
             for (Map.Entry<UUID, List<ExperimentRun>> entry : byParticipant.entrySet()) {
-                Map<ExperimentCondition, List<ExperimentRun>> eligible = new java.util.EnumMap<>(ExperimentCondition.class);
+                Map<ExperimentCondition, List<ExperimentRun>> eligible = new EnumMap<>(ExperimentCondition.class);
                 for (ExperimentCondition condition : ExperimentCondition.values()) {
                     eligible.put(condition, new ArrayList<>());
                 }
                 for (ExperimentRun run : entry.getValue()) {
                     if (run.isExcluded()) {
                         runsExcluded++;
-                    } else if (wordCount(run.getFinalText()) == 0) {
-                        runsWithoutWords++;
                     } else {
                         eligible.get(run.getCondition()).add(run);
                     }
@@ -652,16 +787,24 @@ public class StudyMetricsService {
             List<ParticipantData> incomplete = participants.stream()
                     .filter(p -> !p.hasCompletePair() && !p.eligibleRuns().isEmpty())
                     .toList();
+            int withoutEligible = participants.size() - included.size() - incomplete.size();
             int runsCompleted = participants.stream().mapToInt(p -> p.completedRuns().size()).sum();
             int runsIncluded = included.stream().mapToInt(p -> p.eligibleRuns().size()).sum();
             int runsIncomplete = incomplete.stream().mapToInt(p -> p.eligibleRuns().size()).sum();
-            Sample sample = new Sample(all.size(), included.size(), incomplete.size(), runsCompleted, runsIncluded,
-                    runsExcluded, runsIncomplete, runsWithoutWords);
+            int runsWithoutWords = (int) included.stream().flatMap(p -> p.eligibleRuns().stream())
+                    .filter(run -> wordCount(run.getFinalText()) == 0).count();
+            Sample sample = new Sample(participants.size(), included.size(), incomplete.size(), withoutEligible,
+                    runsCompleted, runsIncluded, runsExcluded, runsIncomplete, runsWithoutWords);
             return new Cohort(participants, included, sample);
         }
 
         List<ExperimentRun> includedRuns() {
             return included.stream().flatMap(p -> p.eligibleRuns().stream()).toList();
+        }
+
+        /** Ejecuciones que PEO usa: las de participantes con palabras contables en ambas condiciones. */
+        List<ExperimentRun> peoRuns() {
+            return included.stream().filter(ParticipantData::hasPeoPair).flatMap(p -> p.peoRuns().stream()).toList();
         }
 
         List<ExperimentRun> completedRuns() {

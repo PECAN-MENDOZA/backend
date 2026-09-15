@@ -1,6 +1,5 @@
 package com.mvp.backend.correction.application.service;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -39,7 +38,6 @@ import com.mvp.backend.student.domain.repository.StudentRepository;
 @Service
 public class CorrectionService {
 
-    private static final int MAX_SUGGESTIONS = 3;
     static final String INCIDENT_AI_REQUEST_FAILED = "AI_REQUEST_FAILED";
     static final String INCIDENT_MODEL_VERSION_CHANGED = "MODEL_VERSION_CHANGED";
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
@@ -271,21 +269,7 @@ public class CorrectionService {
     }
 
     private List<String> normalizeSuggestions(String correctedText, List<String> suggestions) {
-        var uniqueSuggestions = new LinkedHashMap<String, String>();
-        addSuggestion(uniqueSuggestions, correctedText);
-        if (suggestions != null) {
-            suggestions.forEach(suggestion -> addSuggestion(uniqueSuggestions, suggestion));
-        }
-        return uniqueSuggestions.values().stream()
-                .limit(MAX_SUGGESTIONS)
-                .toList();
-    }
-
-    private void addSuggestion(LinkedHashMap<String, String> suggestions, String suggestion) {
-        String candidate = emptyToNull(suggestion);
-        if (candidate != null) {
-            suggestions.putIfAbsent(candidate.strip(), candidate);
-        }
+        return OfferedSuggestions.of(correctedText, suggestions);
     }
 
     private String emptyToNull(String text) {

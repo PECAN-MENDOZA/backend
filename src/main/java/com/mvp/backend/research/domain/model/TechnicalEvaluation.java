@@ -63,6 +63,10 @@ public class TechnicalEvaluation {
     @Column(name = "false_negatives", nullable = false, updatable = false)
     private int falseNegatives;
 
+    /** Desglose opcional por categoria, serializado como JSON por la capa de aplicacion (write-once). */
+    @Column(name = "categories_json", columnDefinition = "TEXT", updatable = false)
+    private String categoriesJson;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by", nullable = false, updatable = false)
     private Researcher createdBy;
@@ -80,6 +84,23 @@ public class TechnicalEvaluation {
             int truePositives,
             int falsePositives,
             int falseNegatives,
+            Researcher createdBy,
+            Instant createdAt) {
+        this(modelVersion, datasetSha256, scorerVersion, precision, recall, fZeroFive, truePositives, falsePositives,
+                falseNegatives, null, createdBy, createdAt);
+    }
+
+    public TechnicalEvaluation(
+            String modelVersion,
+            String datasetSha256,
+            String scorerVersion,
+            double precision,
+            double recall,
+            double fZeroFive,
+            int truePositives,
+            int falsePositives,
+            int falseNegatives,
+            String categoriesJson,
             Researcher createdBy,
             Instant createdAt) {
         if (modelVersion == null || modelVersion.isBlank() || modelVersion.strip().length() > 160) {
@@ -113,6 +134,7 @@ public class TechnicalEvaluation {
         this.truePositives = truePositives;
         this.falsePositives = falsePositives;
         this.falseNegatives = falseNegatives;
+        this.categoriesJson = categoriesJson;
         this.createdBy = Objects.requireNonNull(createdBy);
         this.createdAt = Objects.requireNonNull(createdAt);
     }

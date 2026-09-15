@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -26,6 +25,7 @@ import com.mvp.backend.config.ResearchProperties;
 import com.mvp.backend.correction.domain.model.CorrectionSession;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.experiment.domain.model.ExperimentCondition;
+import com.mvp.backend.experiment.domain.model.ExperimentIncident;
 import com.mvp.backend.experiment.domain.model.ExperimentRun;
 import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
 import com.mvp.backend.research.application.dto.AnnotationCsvFile;
@@ -58,6 +58,7 @@ import com.mvp.backend.research.domain.repository.ResearchStudyRepository;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.research.domain.repository.StudyParticipantRepository;
 import com.mvp.backend.shared.exception.NotFoundException;
+import com.mvp.backend.shared.text.WordTokenizer;
 
 /**
  * Resultados del estudio (spec §9.4 y §11; criterios de exito §3-§5).
@@ -94,11 +95,11 @@ import com.mvp.backend.shared.exception.NotFoundException;
 @Service
 public class StudyMetricsService {
 
-    /** Regla de tokenizacion de PEO y PPM (ver Javadoc de la clase). */
-    public static final Pattern WORD = Pattern.compile("[^\\W_]+(?:['’\\-][^\\W_]+)*", Pattern.UNICODE_CHARACTER_CLASS);
+    /** Regla de tokenizacion de PEO y PPM (ver Javadoc de la clase); la regla vive en {@link WordTokenizer}. */
+    public static final Pattern WORD = WordTokenizer.WORD;
     static final List<String> ANALYSIS_COLUMNS = List.of(
             "pseudonym", "condition", "task", "protocol_version", "included", "excluded", "run_id", "duration_ms",
-            "word_count", "orthography_errors", "orthography_batch_id", "final_text", "suggestion_index", "original_text",
+            "incident_reasons", "word_count", "orthography_errors", "orthography_batch_id", "final_text", "suggestion_index", "original_text",
             "suggestion", "semantic_score", "accepted", "semantic_batch_id");
     /** Cuantil 0.975 de la normal estandar usado en el intervalo de Wilson. */
     static final double Z_95 = 1.959964;
@@ -148,15 +149,7 @@ public class StudyMetricsService {
     // ---------------------------------------------------------------- formulas
 
     public static int wordCount(String text) {
-        if (text == null || text.isBlank()) {
-            return 0;
-        }
-        int count = 0;
-        Matcher matcher = WORD.matcher(text);
-        while (matcher.find()) {
-            count++;
-        }
-        return count;
+        return WordTokenizer.wordCount(text);
     }
 
     /** PEO y PPM de una ejecucion; PEO es {@code null} si el texto no tiene palabras contables. */
@@ -439,6 +432,7 @@ public class StudyMetricsService {
                         String.valueOf(run.isExcluded()),
                         run.getId().toString(),
                         String.valueOf(run.getDurationMs()),
+                        incidentReasons(run),
                         String.valueOf(metrics.wordCount()),
                         text(errors.get(run.getId())),
                         errors.containsKey(run.getId()) ? orthographyBatchId : "",
@@ -468,6 +462,11 @@ public class StudyMetricsService {
 
     private static String text(Integer value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    /** Historial completo de incidencias de la ejecucion, en orden, separado por punto y coma. */
+    private static String incidentReasons(ExperimentRun run) {
+        return run.getIncidents().stream().map(ExperimentIncident::getReason).collect(Collectors.joining(";"));
     }
 
     private static List<String> concat(List<String> head, List<String> tail) {

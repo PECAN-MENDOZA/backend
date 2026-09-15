@@ -63,12 +63,37 @@ class ExperimentRunTests {
         var run = activeRun(ExperimentCondition.ASSISTED);
         run.complete("Texto final", 60_000, UUID.randomUUID(), Instant.now());
 
-        run.recordIncident("DURATION_INCONSISTENT");
+        Instant at = Instant.parse("2026-09-14T12:10:00Z");
+        run.recordIncident("DURATION_INCONSISTENT", at);
+        run.recordIncident("MODEL_VERSION_CHANGED", at.plusSeconds(5));
 
-        assertThat(run.getIncidentCount()).isEqualTo(1);
-        assertThat(run.getFailureReason()).isEqualTo("DURATION_INCONSISTENT");
+        assertThat(run.getIncidentCount()).isEqualTo(2);
+        assertThat(run.getFailureReason()).isEqualTo("MODEL_VERSION_CHANGED");
+        // Historial append-only: ambos motivos quedan, en orden y con su instante.
+        assertThat(run.getIncidents()).extracting(ExperimentIncident::getReason)
+                .containsExactly("DURATION_INCONSISTENT", "MODEL_VERSION_CHANGED");
+        assertThat(run.getIncidents()).extracting(ExperimentIncident::getCreatedAt)
+                .containsExactly(at, at.plusSeconds(5));
+        assertThat(run.getIncidents()).allSatisfy(incident -> assertThat(incident.getRun()).isSameAs(run));
+        assertThatThrownBy(() -> run.getIncidents().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
         assertThat(run.getDurationMs()).isEqualTo(60_000);
+    }
+
+    @Test
+    void redeemedRunThatOutlivesItsCodeExpiresOnStart() {
+        Instant now = Instant.parse("2026-09-14T12:00:00Z");
+        var run = pendingRun(now); // vence a los 1800 s
+        run.redeem(now.plusSeconds(60));
+
+        assertThatThrownBy(() -> run.start(now.plusSeconds(1801)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Access code expired before start");
+
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.EXPIRED);
+        assertThat(run.getStartedAt()).isNull();
+        assertThat(run.getAccessCodeHash()).isNull();
+        assertThat(run.getCompletedAt()).isEqualTo(now.plusSeconds(1801));
     }
 
     @Test
@@ -121,6 +146,7 @@ class ExperimentRunTests {
 
         assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.TECHNICAL_FAILURE);
         assertThat(run.getIncidentCount()).isEqualTo(1);
+        assertThat(run.getIncidents()).extracting(ExperimentIncident::getReason).containsExactly("TECHNICAL_FAILURE");
         assertThat(run.getFailureReason()).isEqualTo("La sesion de correccion no respondio");
         assertThat(run.getCompletedAt()).isEqualTo(now);
         assertThat(run.getAccessCodeHash()).isNull();

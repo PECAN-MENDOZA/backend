@@ -155,6 +155,55 @@ class CorrectionExperimentIntegrationTests {
     }
 
     @Test
+    void feedbackIsForwardedToTheAiOnlyAfterTheTransactionCommits() {
+        when(aiCorrectionClient.correct("ola mundo", student.getId()))
+                .thenReturn(new AiCorrectionResponse(student.getId(), "hola mundo", 10, List.of("hola mundo"), "beto-lora-1.2"));
+        var session = correctionService.process(student.getId(), new ProcessCorrectionRequest("ola mundo", null));
+
+        // Joining an outer transaction: the AI must not be contacted while the session row is still locked.
+        transactionTemplate.executeWithoutResult(status -> {
+            var feedback = correctionService.registerFeedback(student.getId(), session.sessionId(),
+                    new CorrectionFeedbackRequest("hola mundo", true, "hola mundo!"));
+            assertThat(feedback.acceptedCorrection()).isTrue();
+            verify(aiCorrectionClient, never()).sendFeedback(any(), anyString(), any(), anyBoolean());
+        });
+        verify(aiCorrectionClient).sendFeedback(student.getId(), "ola mundo", "hola mundo!", true);
+        assertThat(sessionRepository.findById(session.sessionId()).orElseThrow().getFinalText()).isEqualTo("hola mundo!");
+    }
+
+    @Test
+    void feedbackIsNotForwardedWhenTheTransactionRollsBack() {
+        when(aiCorrectionClient.correct("ola mundo", student.getId()))
+                .thenReturn(new AiCorrectionResponse(student.getId(), "hola mundo", 10, List.of("hola mundo"), "beto-lora-1.2"));
+        var session = correctionService.process(student.getId(), new ProcessCorrectionRequest("ola mundo", null));
+
+        transactionTemplate.executeWithoutResult(status -> {
+            correctionService.registerFeedback(student.getId(), session.sessionId(),
+                    new CorrectionFeedbackRequest("hola mundo", true, null));
+            status.setRollbackOnly();
+        });
+
+        verify(aiCorrectionClient, never()).sendFeedback(any(), anyString(), any(), anyBoolean());
+        assertThat(sessionRepository.findById(session.sessionId()).orElseThrow().getAcceptedCorrection()).isNull();
+    }
+
+    @Test
+    void feedbackIsKeptWhenTheAiRejectsTheForwardedFeedback() {
+        when(aiCorrectionClient.correct("ola mundo", student.getId()))
+                .thenReturn(new AiCorrectionResponse(student.getId(), "hola mundo", 10, List.of("hola mundo"), "beto-lora-1.2"));
+        var session = correctionService.process(student.getId(), new ProcessCorrectionRequest("ola mundo", null));
+        org.mockito.Mockito.doThrow(new IllegalStateException("ai down: ola mundo"))
+                .when(aiCorrectionClient).sendFeedback(any(), anyString(), any(), anyBoolean());
+
+        var feedback = correctionService.registerFeedback(student.getId(), session.sessionId(),
+                new CorrectionFeedbackRequest("hola mundo", true, null));
+
+        assertThat(feedback.acceptedCorrection()).isTrue();
+        assertThat(sessionRepository.findById(session.sessionId()).orElseThrow().getAcceptedCorrection()).isTrue();
+        verify(aiCorrectionClient).sendFeedback(student.getId(), "ola mundo", "hola mundo", true);
+    }
+
+    @Test
     void unassistedRunNeverReachesTheAiNorPersistsASession() {
         UUID runId = activeRun(3, ExperimentCondition.UNASSISTED);
 

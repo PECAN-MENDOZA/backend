@@ -1,14 +1,19 @@
 package com.mvp.backend.correction.application.service;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
@@ -38,6 +43,7 @@ import com.mvp.backend.student.domain.repository.StudentRepository;
 @Service
 public class CorrectionService {
 
+    private static final Logger log = LoggerFactory.getLogger(CorrectionService.class);
     static final String INCIDENT_AI_REQUEST_FAILED = "AI_REQUEST_FAILED";
     static final String INCIDENT_MODEL_VERSION_CHANGED = "MODEL_VERSION_CHANGED";
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
@@ -52,6 +58,7 @@ public class CorrectionService {
     private final TransactionTemplate readOnlyTransaction;
     private final TransactionTemplate writeTransaction;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     public CorrectionService(
             StudentRepository studentRepository,
@@ -61,7 +68,8 @@ public class CorrectionService {
             ExperimentRunRepository runRepository,
             ExperimentIncidentRecorder incidentRecorder,
             PlatformTransactionManager transactionManager,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            Clock clock) {
         this.studentRepository = studentRepository;
         this.sessionRepository = sessionRepository;
         this.wordCorrectionRepository = wordCorrectionRepository;
@@ -73,6 +81,7 @@ public class CorrectionService {
         this.readOnlyTransaction.setReadOnly(true);
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     /**
@@ -92,21 +101,19 @@ public class CorrectionService {
     }
 
     /** Resultado de la fase de lectura: solo identificadores, ninguna entidad sale de la transaccion. */
-    private record Preflight(UUID studentId, UUID runId, ExperimentCondition condition) {
+    private record Preflight(UUID studentId, UUID runId) {
     }
 
     private Preflight preflight(UUID studentId, UUID runId) {
         // La condicion se verifica antes de tocar la IA o persistir nada: en UNASSISTED el backend
         // bloquea por su cuenta, independientemente de lo que haga el teclado.
-        ExperimentCondition condition = null;
         if (runId != null) {
             var run = runRepository.findByIdAndParticipantStudentId(runId, studentId)
                     .orElseThrow(() -> new NotFoundException("Experiment run not found"));
             requireAssistedAndActive(run, "Experiment run is not active");
-            condition = run.getCondition();
         }
         requireStudent(studentId);
-        return new Preflight(studentId, runId, condition);
+        return new Preflight(studentId, runId);
     }
 
     private static void requireAssistedAndActive(ExperimentRun run, String inactiveMessage) {
@@ -149,7 +156,7 @@ public class CorrectionService {
             // La ejecucion ya fue atendida por otra version del modelo: se audita, no se oculta ni se
             // rechaza. Directamente sobre la entidad bloqueada (el recorder REQUIRES_NEW esperaria
             // por este mismo bloqueo).
-            run.recordIncident(INCIDENT_MODEL_VERSION_CHANGED);
+            run.recordIncident(INCIDENT_MODEL_VERSION_CHANGED, clock.instant());
         }
         List<String> suggestions = normalizeSuggestions(aiResponse.correctedText(), aiResponse.suggestions());
         // El detalle palabra por palabra ya no lo entrega la IA: se derivara por diff
@@ -203,9 +210,35 @@ public class CorrectionService {
         // El feedback de una sesion experimental se guarda pero no se reenvia: el LoRA es global y las
         // decisiones del experimento no deben alterar el comportamiento del modelo en caliente.
         if (!session.isExperimental()) {
-            aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), acceptedText, accepted);
+            forwardAfterCommit(studentId, session.getOriginalText(), acceptedText, accepted);
         }
         return toResponse(session, wordCorrections);
+    }
+
+    /**
+     * El reenvio a la IA ocurre tras confirmar la transaccion, fuera del bloqueo de la sesion: una IA lenta
+     * (cold start) no retiene la fila ni la conexion, y un fallo del reenvio nunca deshace el feedback ya
+     * guardado. Sin transaccion activa (pruebas unitarias) se reenvia en linea.
+     */
+    private void forwardAfterCommit(UUID studentId, String originalText, String acceptedText, boolean accepted) {
+        Runnable forward = () -> {
+            try {
+                aiCorrectionClient.sendFeedback(studentId, originalText, acceptedText, accepted);
+            } catch (RuntimeException exception) {
+                // Best-effort: solo la clase, nunca el mensaje (podria contener el texto del alumno).
+                log.warn("Could not forward correction feedback to the AI service ({})", exception.getClass().getSimpleName());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    forward.run();
+                }
+            });
+        } else {
+            forward.run();
+        }
     }
 
     private List<WordCorrection> deriveWordCorrections(CorrectionSession session, String acceptedSuggestion) {

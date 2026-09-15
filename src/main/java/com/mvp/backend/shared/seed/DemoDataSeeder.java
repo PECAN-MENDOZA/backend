@@ -140,8 +140,9 @@ public class DemoDataSeeder implements ApplicationRunner {
         log.info("Demo seed completed: 1 teacher, {} students, {} correction sessions.",
                 students.size(),
                 sessions.size());
-        log.info("Teacher login: {} / {}", teacherEmail, properties.teacherPassword());
-        log.info("Student login example: {} / {}", students.getFirst().username(), properties.studentPassword());
+        // Nunca se registran contrasenas en claro: viven en app.demo-seed.* (solo entornos de demo).
+        log.info("Teacher login: {} (password: app.demo-seed.teacher-password)", teacherEmail);
+        log.info("Student login example: {} (password: app.demo-seed.student-password)", students.getFirst().username());
     }
 
     private void shutdownIfRequested() {

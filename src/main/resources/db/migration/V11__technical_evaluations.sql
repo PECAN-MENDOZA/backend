@@ -24,3 +24,7 @@ CREATE TABLE technical_evaluations (
 );
 
 CREATE INDEX idx_technical_evaluations_owner ON technical_evaluations(created_by, created_at DESC);
+
+-- Desglose opcional por categoria de error (spec §11.4): lista JSON de
+-- {category, tp, fp, fn, precision, recall, f05}, validada con las mismas reglas que el vector global.
+ALTER TABLE technical_evaluations ADD COLUMN categories_json TEXT;

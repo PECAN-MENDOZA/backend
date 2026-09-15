@@ -1,5 +1,6 @@
 package com.mvp.backend.experiment.application.service;
 
+import java.time.Clock;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -25,15 +26,17 @@ public class ExperimentIncidentRecorder {
     private static final Logger log = LoggerFactory.getLogger(ExperimentIncidentRecorder.class);
 
     private final ExperimentRunRepository runRepository;
+    private final Clock clock;
 
-    public ExperimentIncidentRecorder(ExperimentRunRepository runRepository) {
+    public ExperimentIncidentRecorder(ExperimentRunRepository runRepository, Clock clock) {
         this.runRepository = runRepository;
+        this.clock = clock;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(UUID runId, String reason) {
         runRepository.findByIdForUpdate(runId).ifPresentOrElse(
-                run -> run.recordIncident(reason),
+                run -> run.recordIncident(reason, clock.instant()),
                 () -> log.warn("Incident for unknown experiment run {}", runId));
     }
 }

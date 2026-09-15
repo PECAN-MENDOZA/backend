@@ -685,6 +685,8 @@ class StudyMetricsServiceTests {
     void analysisCsvListsRunsAndEvaluatedSuggestionsWithPseudonymsOnly() {
         ExperimentRun p1Assisted = completedRun(1, ExperimentCondition.ASSISTED, "=uno dos", 120_000);
         ExperimentRun p1Unassisted = completedRun(1, ExperimentCondition.UNASSISTED, "tres, \"cuatro\"", 60_000);
+        p1Unassisted.recordIncident("DURATION_INCONSISTENT", NOW.minusSeconds(30));
+        p1Unassisted.recordIncident("MODEL_VERSION_CHANGED", NOW.minusSeconds(20));
         ExperimentRun p2Assisted = completedRun(2, ExperimentCondition.ASSISTED, "incompleto", 60_000);
         stubStudyRuns(p1Assisted, p1Unassisted, p2Assisted);
         stubResearcher();
@@ -711,18 +713,18 @@ class StudyMetricsServiceTests {
         String orthographyId = orthography.getId().toString();
         String semanticId = semantic.getId().toString();
         assertThat(csv).startsWith("pseudonym,condition,task,protocol_version,included,excluded,run_id,duration_ms,"
-                + "word_count,orthography_errors,orthography_batch_id,final_text,suggestion_index,original_text,suggestion,"
-                + "semantic_score,accepted,semantic_batch_id\n");
+                + "incident_reasons,word_count,orthography_errors,orthography_batch_id,final_text,suggestion_index,"
+                + "original_text,suggestion,semantic_score,accepted,semantic_batch_id\n");
         // The accepted column is the value frozen in the semantic item, not the live session state.
         rejected.registerFeedback("que", null, true, 1, null);
         csv = new String(service.analysisCsv(researcherId, studyId).bytes(), UTF_8);
-        assertThat(csv).contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1," + orthographyId
+        assertThat(csv).contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,,2,1," + orthographyId
                         + ", =uno dos,1,ola,Hola,0,true," + semanticId + "\n")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,2,1," + orthographyId
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,,2,1," + orthographyId
                         + ", =uno dos,0,ke,que,2,false," + semanticId + "\n")
-                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,2,0," + orthographyId
+                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,DURATION_INCONSISTENT;MODEL_VERSION_CHANGED,2,0," + orthographyId
                         + ",\"tres, \"\"cuatro\"\"\",,,,,,\n")
-                .contains("P-002,ASSISTED,TASK_A,1,false,false," + p2Assisted.getId() + ",60000,1,,,incompleto,,,,,,\n");
+                .contains("P-002,ASSISTED,TASK_A,1,false,false," + p2Assisted.getId() + ",60000,,1,,,incompleto,,,,,,\n");
         assertThat(csv).doesNotContain("student-real-name", "Colegio", "T-");
         assertThat(file.sha256()).hasSize(64);
 

@@ -341,6 +341,24 @@ class StudentExperimentServiceTests {
     }
 
     @Test
+    void startAfterTheCodeExpiredMarksTheRunExpiredAndFails() {
+        var run = new ExperimentRun(new StudyParticipant(study, 1), protocol,
+                protocol.findTask(TaskVariant.TASK_A).orElseThrow(), ExperimentCondition.ASSISTED,
+                AccessCode.hash(CODE), NOW.minusSeconds(1), NOW.minus(TTL));
+        run.getParticipant().linkStudent(student);
+        run.redeem(NOW.minusSeconds(120));
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.start(firstStudentId, run.getId()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Access code expired before start");
+
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.EXPIRED);
+        assertThat(run.getStartedAt()).isNull();
+        assertThat(run.getBackendVersion()).isNull();
+    }
+
+    @Test
     void startRequiresARedeemedRunOwnedByTheStudent() {
         var notRedeemed = pendingRun();
         when(runRepository.findByIdAndParticipantStudentIdForUpdate(notRedeemed.getId(), firstStudentId))
@@ -361,7 +379,7 @@ class StudentExperimentServiceTests {
     @Test
     void activeReturnsTheFirstRestorableRun() {
         var active = startedRun(NOW.minusSeconds(30));
-        when(runRepository.findRestorableByStudentId(firstStudentId)).thenReturn(List.of(active, redeemedRun()));
+        when(runRepository.findRestorableByStudentId(firstStudentId, NOW)).thenReturn(List.of(active, redeemedRun()));
 
         var restored = service.active(firstStudentId);
 
@@ -376,7 +394,7 @@ class StudentExperimentServiceTests {
         run.getParticipant().linkStudent(student);
         when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
-        when(runRepository.findRestorableByStudentId(student.getId()))
+        when(runRepository.findRestorableByStudentId(student.getId(), NOW))
                 .thenAnswer(inv -> run.isRedeemedPending() ? List.of(run) : List.of());
         service.redeem(student.getId(), new RedeemAccessCodeRequest("ABCD2345"));
 
@@ -388,7 +406,7 @@ class StudentExperimentServiceTests {
 
     @Test
     void activeIsNotFoundWhenNothingIsRestorable() {
-        when(runRepository.findRestorableByStudentId(firstStudentId)).thenReturn(List.of());
+        when(runRepository.findRestorableByStudentId(firstStudentId, NOW)).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.active(firstStudentId))
                 .isInstanceOf(NotFoundException.class)
@@ -440,6 +458,75 @@ class StudentExperimentServiceTests {
 
         assertThat(run.getIncidentCount()).isZero();
         assertThat(run.getFailureReason()).isNull();
+        assertThat(run.getIncidents()).isEmpty();
+    }
+
+    @Test
+    void plausibleDurationRecordsNoIncident() {
+        var run = activeRunStartedAt(NOW.minusSeconds(120));
+        // 20 palabras en 60 s = 20 ppm, dentro de lo transcurrido en el servidor.
+        var request = new CompleteExperimentRequest("uno dos tres cuatro cinco seis siete ocho nueve diez "
+                + "once doce trece catorce quince dieciseis diecisiete dieciocho diecinueve veinte",
+                60_000L, UUID.randomUUID(), "debug");
+
+        var response = service.complete(student.getId(), run.getId(), request);
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(run.getIncidentCount()).isZero();
+        assertThat(run.getIncidents()).isEmpty();
+    }
+
+    @Test
+    void subSecondDurationIsRecordedAsImplausiblyShortNotRejected() {
+        var run = activeRunStartedAt(NOW.minusSeconds(60));
+        var request = new CompleteExperimentRequest("Texto final", 999L, UUID.randomUUID(), "debug");
+
+        var response = service.complete(student.getId(), run.getId(), request);
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(run.getDurationMs()).isEqualTo(999L);
+        assertThat(run.getIncidentCount()).isEqualTo(1);
+        assertThat(run.getFailureReason()).isEqualTo("DURATION_IMPLAUSIBLY_SHORT");
+        assertThat(run.getIncidents()).singleElement().satisfies(incident -> {
+            assertThat(incident.getReason()).isEqualTo("DURATION_IMPLAUSIBLY_SHORT");
+            assertThat(incident.getCreatedAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    void moreThanTwoHundredWordsPerMinuteIsRecordedAsImplausiblyShort() {
+        var run = activeRunStartedAt(NOW.minusSeconds(60));
+        // 21 palabras en 6 s = 210 ppm (> 200); la duracion sigue por debajo de lo transcurrido en el servidor.
+        String words = "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce quince "
+                + "dieciseis diecisiete dieciocho diecinueve veinte veintiuno";
+        var request = new CompleteExperimentRequest(words, 6_000L, UUID.randomUUID(), "debug");
+
+        service.complete(student.getId(), run.getId(), request);
+
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
+        assertThat(run.getIncidentCount()).isEqualTo(1);
+        assertThat(run.getFailureReason()).isEqualTo("DURATION_IMPLAUSIBLY_SHORT");
+
+        // Exactly 200 ppm is still plausible: 20 words in 6 s.
+        var boundary = activeRunStartedAt(NOW.minusSeconds(60));
+        service.complete(student.getId(), boundary.getId(), new CompleteExperimentRequest(
+                "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce quince "
+                        + "dieciseis diecisiete dieciocho diecinueve veinte", 6_000L, UUID.randomUUID(), "debug"));
+        assertThat(boundary.getIncidentCount()).isZero();
+    }
+
+    @Test
+    void bothDurationIncidentsCanCoexistOnOneCompletion() {
+        // Una ejecucion iniciada "en el futuro" (reloj del servidor atrasado) hace que 500 ms supere lo
+        // transcurrido y a la vez sea implausiblemente corta: ambas incidencias quedan en el historial.
+        var late = activeRunStartedAt(NOW.plusSeconds(600));
+
+        service.complete(student.getId(), late.getId(), new CompleteExperimentRequest("Texto", 500L, UUID.randomUUID(), "d"));
+
+        assertThat(late.getIncidents()).extracting(incident -> incident.getReason())
+                .containsExactly("DURATION_INCONSISTENT", "DURATION_IMPLAUSIBLY_SHORT");
+        assertThat(late.getIncidentCount()).isEqualTo(2);
+        assertThat(late.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
     }
 
     @Test

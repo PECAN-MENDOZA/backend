@@ -56,7 +56,10 @@ public class AuthService {
         if (teacherRepository.existsByUsername(request.username())) {
             throw new BusinessException("Teacher username is already in use");
         }
-        if (teacherRepository.existsByEmail(request.email())) {
+        // El mismo mensaje generico si el correo ya es de un docente o de un investigador: el registro
+        // publico no debe servir de oraculo sobre las cuentas de investigacion.
+        if (teacherRepository.existsByEmail(request.email())
+                || researcherRepository.findByEmail(request.email()).isPresent()) {
             throw new BusinessException("Teacher email is already in use");
         }
         var teacher = new Teacher(
@@ -77,20 +80,24 @@ public class AuthService {
         return tokenService.issue(teacher.getId(), UserRole.TEACHER);
     }
 
+    /**
+     * Siempre ejecuta exactamente dos comparaciones BCrypt (real o ficticia por cada lado), de modo que el
+     * tiempo de respuesta no revele si el correo pertenece a un investigador, a un docente o a nadie.
+     */
     @Transactional(readOnly = true)
     public AuthResponse loginStaff(StaffLoginRequest request) {
         var researcher = researcherRepository.findByEmail(request.email());
-        if (researcher.isPresent()
-                && passwordEncoder.matches(request.password(), researcher.get().getPasswordHash())) {
+        var teacher = teacherRepository.findByEmail(request.email());
+        boolean researcherMatches = passwordEncoder.matches(request.password(),
+                researcher.map(r -> r.getPasswordHash()).orElse(dummyHash));
+        boolean teacherMatches = passwordEncoder.matches(request.password(),
+                teacher.map(t -> t.getPasswordHash()).orElse(dummyHash));
+        if (researcher.isPresent() && researcherMatches) {
             return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER);
         }
-        var teacher = teacherRepository.findByEmail(request.email());
-        if (teacher.isPresent()
-                && passwordEncoder.matches(request.password(), teacher.get().getPasswordHash())) {
+        if (teacher.isPresent() && teacherMatches) {
             return tokenService.issue(teacher.get().getId(), UserRole.TEACHER);
         }
-        // Comparación ficticia: el tiempo de respuesta no debe revelar si el correo existe.
-        passwordEncoder.matches(request.password(), dummyHash);
         throw new UnauthorizedException("Invalid staff credentials");
     }
 

@@ -220,11 +220,11 @@ class ResearchStudyServiceTests {
 
     @Test
     void protocolCreationInsertsBothTasksAsNextVersion() {
-        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
         when(protocolRepository.findFirstByStudyIdOrderByVersionDesc(studyId))
                 .thenReturn(Optional.of(new StudyProtocol(study, 2)));
-        when(protocolRepository.save(any(StudyProtocol.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(protocolRepository.saveAndFlush(any(StudyProtocol.class))).thenAnswer(inv -> inv.getArgument(0));
 
         StudyProtocolResponse response = service.createProtocol(
                 researcherId, studyId, new CreateProtocolRequest("Escribe sobre tu mascota", "Escribe sobre tu escuela"));
@@ -234,6 +234,79 @@ class ResearchStudyServiceTests {
         assertThat(response.taskAPrompt()).isEqualTo("Escribe sobre tu mascota");
         assertThat(response.taskBPrompt()).isEqualTo("Escribe sobre tu escuela");
         verify(auditRepository).save(any(ResearchAuditEvent.class));
+        // The study row is locked so concurrent creations cannot compute the same version.
+        verify(studyRepository).findOwnedForUpdate(studyId, researcherId);
+        verify(studyRepository, never()).findByIdAndCreatedById(any(), any());
+    }
+
+    @Test
+    void protocolVersionRaceIsAConflict() {
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(protocolRepository.findFirstByStudyIdOrderByVersionDesc(studyId)).thenReturn(Optional.empty());
+        when(protocolRepository.saveAndFlush(any(StudyProtocol.class))).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement", new ConstraintViolationException("dup", new SQLException("dup"),
+                        "uk_protocol_version")));
+
+        assertThatThrownBy(() -> service.createProtocol(
+                researcherId, studyId, new CreateProtocolRequest("Consigna A larga", "Consigna B larga")))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Protocol version 1 already exists");
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void unrecognisedIntegrityViolationOnProtocolCreationIsRethrown() {
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(protocolRepository.findFirstByStudyIdOrderByVersionDesc(studyId)).thenReturn(Optional.empty());
+        var other = new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("x", new SQLException("x"), "ck_protocol_status"));
+        when(protocolRepository.saveAndFlush(any(StudyProtocol.class))).thenThrow(other);
+
+        assertThatThrownBy(() -> service.createProtocol(
+                researcherId, studyId, new CreateProtocolRequest("Consigna A larga", "Consigna B larga")))
+                .isSameAs(other);
+    }
+
+    // ---------------------------------------------------------------- close
+
+    @Test
+    void closingAnActiveStudyAuditsAndRejectsASecondClose() {
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
+        when(protocolRepository.findFirstByStudyIdAndStatus(studyId, ProtocolStatus.ACTIVE)).thenReturn(Optional.empty());
+
+        var response = service.closeStudy(researcherId, studyId);
+
+        assertThat(response.status()).isEqualTo(StudyStatus.CLOSED);
+        ArgumentCaptor<ResearchAuditEvent> auditCaptor = ArgumentCaptor.forClass(ResearchAuditEvent.class);
+        verify(auditRepository).save(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().getAction()).isEqualTo("STUDY_CLOSED");
+
+        assertThatThrownBy(() -> service.closeStudy(researcherId, studyId))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Study is already closed");
+        verify(auditRepository, times(1)).save(any());
+    }
+
+    @Test
+    void draftStudyCannotBeClosed() {
+        ResearchStudy draft = new ResearchStudy("EXP-02", "Borrador", researcher);
+        when(studyRepository.findOwnedForUpdate(draft.getId(), researcherId)).thenReturn(Optional.of(draft));
+
+        assertThatThrownBy(() -> service.closeStudy(researcherId, draft.getId()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only an active study can be closed");
+        assertThat(draft.getStatus()).isEqualTo(StudyStatus.DRAFT);
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void unknownStudyCannotBeClosed() {
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.closeStudy(researcherId, studyId))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Study not found");
     }
 
     @Test
@@ -392,6 +465,26 @@ class ResearchStudyServiceTests {
     }
 
     @Test
+    void redeemedButNeverStartedCodePastItsTtlIsExpiredBeforeIssuingANewOne() {
+        StudyParticipant participant = new StudyParticipant(study, 1);
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        protocol.activate();
+        ExperimentRun stale = new ExperimentRun(participant, protocol, protocol.findTask(TaskVariant.TASK_A).orElseThrow(),
+                ExperimentCondition.ASSISTED, "a".repeat(64), NOW.minusSeconds(1), NOW.minus(TTL));
+        stale.redeem(NOW.minus(TTL).plusSeconds(60)); // the phone was closed on the confirmation screen
+        stubCodeGeneration(participant, protocol, 0);
+        stubAuditResearcher();
+        when(runRepository.findByParticipantIdOrderByCreatedAtAsc(participant.getId())).thenReturn(List.of(stale));
+        when(runRepository.saveAndFlush(any(ExperimentRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.generateAccessCode(researcherId, studyId, participant.getId());
+
+        assertThat(stale.getStatus()).isEqualTo(ExperimentRunStatus.EXPIRED);
+        assertThat(stale.getAccessCodeHash()).isNull();
+        verify(runRepository).save(stale);
+    }
+
+    @Test
     void hashCollisionRegeneratesTheCode() throws Exception {
         StudyParticipant participant = new StudyParticipant(study, 1);
         StudyProtocol protocol = protocolWithTasks(study, 1);
@@ -514,7 +607,7 @@ class ResearchStudyServiceTests {
         ExperimentRun run = pendingRun(1);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         ExperimentRunResponse response = service.revokeAccessCode(researcherId, studyId, run.getId());
 
@@ -533,7 +626,7 @@ class ResearchStudyServiceTests {
         run.redeem(NOW);
         run.start(NOW);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.revokeAccessCode(researcherId, studyId, run.getId()))
                 .isInstanceOf(BusinessException.class)
@@ -548,7 +641,7 @@ class ResearchStudyServiceTests {
         run.start(NOW);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         ExperimentRunResponse response = service.cancelRun(
                 researcherId, studyId, run.getId(), new RunReasonRequest("El alumno abandono la sesion"));
@@ -558,10 +651,91 @@ class ResearchStudyServiceTests {
     }
 
     @Test
+    void runCompletedBetweenReadAndWriteCannotBeCancelled() {
+        // The locked lookup returns the state already committed by the phone: COMPLETED.
+        ExperimentRun run = completedRun(1);
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.cancelRun(
+                researcherId, studyId, run.getId(), new RunReasonRequest("El investigador cancela tarde")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only pending or active runs can be cancelled");
+
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
+        assertThat(run.getFinalText()).isEqualTo("Texto final");
+        verify(runRepository).findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId);
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void revokeAndExcludeAlsoUseTheLockedLookup() {
+        ExperimentRun completed = completedRun(1);
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(completed.getId(), studyId)).thenReturn(Optional.of(completed));
+
+        assertThatThrownBy(() -> service.revokeAccessCode(researcherId, studyId, completed.getId()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only a pending access code can be revoked");
+        assertThatThrownBy(() -> service.failRunTechnically(
+                researcherId, studyId, completed.getId(), new RunReasonRequest("La IA no respondio en toda la sesion")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only pending or active runs can fail technically");
+        verify(runRepository, times(2)).findByIdAndParticipantStudyIdForUpdate(completed.getId(), studyId);
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void researcherDeclaresATechnicalFailureOnAnActiveRun() {
+        ExperimentRun run = pendingRun(1);
+        run.redeem(NOW);
+        run.start(NOW);
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
+
+        ExperimentRunResponse response = service.failRunTechnically(
+                researcherId, studyId, run.getId(), new RunReasonRequest("La IA no respondio en toda la sesion"));
+
+        assertThat(response.status()).isEqualTo(ExperimentRunStatus.TECHNICAL_FAILURE);
+        assertThat(response.failureReason()).isEqualTo("La IA no respondio en toda la sesion");
+        assertThat(response.incidentCount()).isEqualTo(1);
+        assertThat(response.incidents()).singleElement().satisfies(incident -> {
+            assertThat(incident.reason()).isEqualTo("TECHNICAL_FAILURE");
+            assertThat(incident.at()).isEqualTo(NOW);
+        });
+        ArgumentCaptor<ResearchAuditEvent> auditCaptor = ArgumentCaptor.forClass(ResearchAuditEvent.class);
+        verify(auditRepository).save(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().getAction()).isEqualTo("RUN_TECHNICAL_FAILURE");
+
+        // A second declaration neither rewrites the reason nor audits again.
+        assertThatThrownBy(() -> service.failRunTechnically(
+                researcherId, studyId, run.getId(), new RunReasonRequest("Otro motivo posterior distinto")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only pending or active runs can fail technically");
+        assertThat(run.getFailureReason()).isEqualTo("La IA no respondio en toda la sesion");
+        verify(auditRepository, times(1)).save(any());
+    }
+
+    @Test
+    void technicalFailureRequiresAValidReason() {
+        ExperimentRun run = pendingRun(1);
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.failRunTechnically(
+                researcherId, studyId, run.getId(), new RunReasonRequest("corto")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Reason must have between 10 and 500 characters");
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.PENDING);
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
     void cancellationRejectsCompletedRuns() {
         ExperimentRun run = completedRun(1);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.cancelRun(
                 researcherId, studyId, run.getId(), new RunReasonRequest("Motivo suficientemente largo")))
@@ -575,7 +749,7 @@ class ResearchStudyServiceTests {
         ExperimentRun run = pendingRun(1);
         run.cancel("Motivo original de la cancelacion", NOW.minusSeconds(60));
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.cancelRun(
                 researcherId, studyId, run.getId(), new RunReasonRequest("Un motivo distinto y posterior")))
@@ -593,7 +767,7 @@ class ResearchStudyServiceTests {
         ExperimentRun run = completedRun(1);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         ExperimentRunResponse response = service.excludeRun(
                 researcherId, studyId, run.getId(), new RunReasonRequest("Duracion inconsistente con el servidor"));
@@ -611,7 +785,7 @@ class ResearchStudyServiceTests {
         ExperimentRun run = pendingRun(1);
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
-        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudyIdForUpdate(run.getId(), studyId)).thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.excludeRun(
                 researcherId, studyId, run.getId(), new RunReasonRequest("Motivo suficientemente largo")))

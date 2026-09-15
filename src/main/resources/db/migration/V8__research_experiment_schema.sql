@@ -89,3 +89,14 @@ CREATE UNIQUE INDEX uk_runs_access_code_hash ON experiment_runs(access_code_hash
 CREATE UNIQUE INDEX uk_runs_one_open_per_participant ON experiment_runs(participant_id) WHERE status IN ('PENDING', 'ACTIVE');
 CREATE INDEX idx_correction_experiment ON correction_sessions(experiment_run_id);
 CREATE INDEX idx_research_audit_study ON research_audit_events(study_id, created_at DESC);
+
+-- Historial de incidencias de una ejecucion (solo inserciones): cada motivo queda con su instante;
+-- experiment_runs.incident_count y failure_reason resumen el ultimo estado para la vista de tabla.
+CREATE TABLE experiment_incidents (
+    id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES experiment_runs(id) ON DELETE CASCADE,
+    reason VARCHAR(80) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX idx_incidents_run ON experiment_incidents(run_id, created_at);

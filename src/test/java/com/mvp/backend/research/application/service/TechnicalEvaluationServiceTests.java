@@ -21,7 +21,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.ObjectMapper;
 
+import com.mvp.backend.research.application.dto.CategoryResult;
 import com.mvp.backend.research.application.dto.TechnicalEvaluationRequest;
 import com.mvp.backend.research.application.dto.TechnicalEvaluationResponse;
 import com.mvp.backend.research.domain.model.ResearchAuditEvent;
@@ -51,7 +53,7 @@ class TechnicalEvaluationServiceTests {
 
     @BeforeEach
     void setUp() {
-        service = new TechnicalEvaluationService(repository, researcherRepository, auditRepository,
+        service = new TechnicalEvaluationService(repository, researcherRepository, auditRepository, new ObjectMapper(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         researcher = new Researcher("lab@example.edu", "hash");
     }
@@ -93,6 +95,74 @@ class TechnicalEvaluationServiceTests {
         assertThat(event.getValue().getStudy()).isNull();
         assertThat(event.getValue().getTargetId()).isEqualTo(response.id());
         assertThat(String.valueOf(event.getValue().getDetail())).contains("t5-lora-global-v3", DATASET, "exact_token_edits_v1");
+    }
+
+    @Test
+    void recordsValidCategoriesAsJsonAndReturnsThemOnEveryRead() {
+        when(researcherRepository.findById(researcher.getId())).thenReturn(Optional.of(researcher));
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        List<CategoryResult> categories = List.of(
+                new CategoryResult(" ortografia ", 30, 5, 10, 30 / 35.0, 0.75, TechnicalEvaluation.fZeroFive(30 / 35.0, 0.75)),
+                new CategoryResult("gramatica", 10, 5, 30, 10 / 15.0, 0.25, TechnicalEvaluation.fZeroFive(10 / 15.0, 0.25)));
+
+        TechnicalEvaluationResponse response = service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40, categories));
+
+        assertThat(response.categories()).extracting(CategoryResult::category).containsExactly("ortografia", "gramatica");
+        assertThat(response.categories().get(0).tp()).isEqualTo(30);
+        ArgumentCaptor<TechnicalEvaluation> saved = ArgumentCaptor.forClass(TechnicalEvaluation.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getCategoriesJson()).contains("\"category\":\"ortografia\"", "\"f05\":");
+        ArgumentCaptor<ResearchAuditEvent> event = ArgumentCaptor.forClass(ResearchAuditEvent.class);
+        verify(auditRepository).save(event.capture());
+        assertThat(String.valueOf(event.getValue().getDetail())).contains("categories=2");
+
+        // Reads deserialize the stored JSON back into the same list.
+        when(repository.findFirstByCreatedByIdOrderByCreatedAtDesc(researcher.getId()))
+                .thenReturn(Optional.of(saved.getValue()));
+        assertThat(service.latest(researcher.getId(), null).categories()).isEqualTo(response.categories());
+    }
+
+    @Test
+    void rejectsAnInconsistentOrRepeatedCategory() {
+        // P = 0.8 claimed but TP/FP = 30/35 = 0.857.
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40,
+                List.of(new CategoryResult("ortografia", 30, 5, 10, 0.8, 0.75, 0.79)))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Category 'ortografia': Precision/recall do not match TP/FP/FN");
+        // Consistent P/R but wrong F0.5.
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40,
+                List.of(new CategoryResult("ortografia", 30, 5, 10, 30 / 35.0, 0.75, 0.5)))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageStartingWith("Category 'ortografia': F0.5 does not match precision and recall");
+        // Duplicate category names (after trimming).
+        assertThatThrownBy(() -> service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40,
+                List.of(new CategoryResult("ortografia", 1, 0, 0, 1.0, 1.0, 1.0),
+                        new CategoryResult("ortografia ", 1, 0, 0, 1.0, 1.0, 1.0)))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Category 'ortografia' is repeated");
+        verify(repository, never()).save(any());
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void absentOrEmptyCategoriesAreAllowedAndReadBackAsEmpty() {
+        when(researcherRepository.findById(researcher.getId())).thenReturn(Optional.of(researcher));
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TechnicalEvaluationResponse absent = service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40, null));
+        TechnicalEvaluationResponse empty = service.record(researcher.getId(), new TechnicalEvaluationRequest(
+                "t5-lora-global-v3", DATASET, "exact_token_edits_v1", 0.8, 0.5, 0.7142857, 40, 10, 40, List.of()));
+
+        assertThat(absent.categories()).isEmpty();
+        assertThat(empty.categories()).isEmpty();
+        ArgumentCaptor<TechnicalEvaluation> saved = ArgumentCaptor.forClass(TechnicalEvaluation.class);
+        verify(repository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).allSatisfy(evaluation -> assertThat(evaluation.getCategoriesJson()).isNull());
     }
 
     @Test

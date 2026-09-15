@@ -1,5 +1,6 @@
 package com.mvp.backend.experiment.domain.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -33,7 +34,13 @@ public interface ExperimentRunRepository extends JpaRepository<ExperimentRun, UU
     @Query("select r from ExperimentRun r where r.id = :id")
     Optional<ExperimentRun> findByIdForUpdate(@Param("id") UUID id);
 
-    Optional<ExperimentRun> findByIdAndParticipantStudyId(UUID runId, UUID studyId);
+    // Transiciones del investigador (revocar, cancelar, excluir, fallo tecnico): el bloqueo de fila
+    // serializa con el telefono, asi una ejecucion completada entre la lectura y la escritura se relee
+    // ya COMPLETED y la transicion se rechaza en vez de pisar el resultado.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from ExperimentRun r where r.id = :runId and r.participant.study.id = :studyId")
+    Optional<ExperimentRun> findByIdAndParticipantStudyIdForUpdate(
+            @Param("runId") UUID runId, @Param("studyId") UUID studyId);
 
     // El indice unico parcial garantiza a lo sumo una ejecucion abierta por hash; si hubiera mas,
     // Spring Data lanza IncorrectResultSizeDataAccessException (fallo seguro).
@@ -46,17 +53,16 @@ public interface ExperimentRunRepository extends JpaRepository<ExperimentRun, UU
     Optional<ExperimentRun> findByAccessCodeHashAndStatusForUpdate(
             @Param("hash") String hash, @Param("status") ExperimentRunStatus status);
 
-    Optional<ExperimentRun> findFirstByParticipantStudentIdAndStatus(UUID studentId, ExperimentRunStatus status);
-
     // Restauracion: ACTIVE primero, luego PENDING ya canjeada (la app se cerro antes de confirmar
-    // el inicio); dentro de cada grupo, la mas reciente.
+    // el inicio) cuyo codigo aun no vencio; dentro de cada grupo, la mas reciente.
     @Query("""
             select r from ExperimentRun r
             where r.participant.student.id = :studentId
-              and (r.status = 'ACTIVE' or (r.status = 'PENDING' and r.redeemedAt is not null))
+              and (r.status = 'ACTIVE'
+                   or (r.status = 'PENDING' and r.redeemedAt is not null and r.accessCodeExpiresAt > :now))
             order by case when r.status = 'ACTIVE' then 0 else 1 end, r.redeemedAt desc, r.createdAt desc
             """)
-    List<ExperimentRun> findRestorableByStudentId(@Param("studentId") UUID studentId);
+    List<ExperimentRun> findRestorableByStudentId(@Param("studentId") UUID studentId, @Param("now") Instant now);
 
     long countByParticipantIdAndStatus(UUID participantId, ExperimentRunStatus status);
 

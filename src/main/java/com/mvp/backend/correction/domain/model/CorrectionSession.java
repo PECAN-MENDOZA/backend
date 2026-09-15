@@ -110,7 +110,9 @@ public class CorrectionSession {
             String feedbackReason) {
         this.selectedSuggestion = selectedSuggestion;
         this.finalText = finalText;
-        this.wasEdited = finalText != null && !finalText.equals(selectedSuggestion);
+        // Solo cuenta como edicion si la correccion quedo efectivamente aceptada: tras un UNDO con
+        // texto_final el alumno no valido nada, asi que wasEdited no debe inflar la tasa de edicion.
+        this.wasEdited = acceptedCorrection && finalText != null && !finalText.equals(selectedSuggestion);
         this.acceptedCorrection = acceptedCorrection;
         this.correctionsCount = correctionsCount;
         this.feedbackReason = feedbackReason;

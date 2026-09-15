@@ -144,7 +144,7 @@ class StudentExperimentConcurrencyTests {
         assertThat(boundStudent).isEqualTo(winner.key());
         assertThat(runRepository.findById(run.getId()).orElseThrow().getRedeemedAt()).isNotNull();
         // The loser never bound anything, so it still has nothing to restore.
-        assertThat(runRepository.findRestorableByStudentId(loser.key())).isEmpty();
+        assertThat(runRepository.findRestorableByStudentId(loser.key(), clock.instant())).isEmpty();
     }
 
     // ---------------------------------------------------------------- helpers

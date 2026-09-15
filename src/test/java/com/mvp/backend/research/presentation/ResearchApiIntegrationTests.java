@@ -41,6 +41,7 @@ import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequ
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
 import com.mvp.backend.experiment.domain.model.AccessCode;
+import com.mvp.backend.research.domain.repository.ResearchAuditEventRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -86,6 +87,8 @@ class ResearchApiIntegrationTests {
     private MockMvc mockMvc;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private ResearchAuditEventRepository auditRepository;
     @MockitoBean
     private AiCorrectionClient aiClient;
 
@@ -148,6 +151,7 @@ class ResearchApiIntegrationTests {
         semanticAnnotation();
         results();
         technicalEvaluations();
+        technicalFailureAndStudyClosure();
         privacySweep();
     }
 
@@ -696,8 +700,8 @@ class ResearchApiIntegrationTests {
                 .andReturn().getResponse().getContentAsByteArray(), UTF_8);
         researchBodies.add(new ResearchBody("analysis.csv", analysis, false));
         assertThat(analysis).startsWith("pseudonym,condition,task,protocol_version,included,excluded,run_id,")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + runs.get("P-001/ASSISTED") + ",120000,4,1,")
-                .contains("P-002,UNASSISTED,TASK_A,1,true,false," + runs.get("P-002/UNASSISTED") + ",120000,4,2,")
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + runs.get("P-001/ASSISTED") + ",120000,,4,1,")
+                .contains("P-002,UNASSISTED,TASK_A,1,true,false," + runs.get("P-002/UNASSISTED") + ",120000,,4,2,")
                 .contains(",ola mundo,hola mundo,0,true,")
                 .contains(",ke tal,que tal,2,false,")
                 .contains(",sinco amigos,cinco amigos,1,false,")
@@ -731,15 +735,97 @@ class ResearchApiIntegrationTests {
         JsonNode listed = research("list technical evaluations", researcher(get(evaluations)), 200);
         assertThat(listed).hasSize(1);
         assertThat(listed.get(0).get("id").asText()).isEqualTo(created.get("id").asText());
+        assertThat(listed.get(0).get("categories")).isEmpty();
         JsonNode latest = research("latest technical evaluation", researcher(get(evaluations + "/latest")), 200);
         assertThat(latest.get("id").asText()).isEqualTo(created.get("id").asText());
+
+        // Optional per-category breakdown (spec §11.4): validated like the global vector and returned as sent.
+        String categories = ",\"categories\":[{\"category\":\"ortografia\",\"tp\":30,\"fp\":5,\"fn\":10,"
+                + "\"precision\":0.857143,\"recall\":0.75,\"f05\":0.833333},"
+                + "{\"category\":\"gramatica\",\"tp\":10,\"fp\":5,\"fn\":30,\"precision\":0.666667,\"recall\":0.25,"
+                + "\"f05\":0.5}]}";
+        JsonNode withCategories = research("record technical evaluation with categories", researcher(post(evaluations))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(evaluation(0.8, 0.5, 0.7142857, 40, 10, 40).replace("}", categories)), 201);
+        assertThat(withCategories.get("categories")).hasSize(2);
+        assertThat(withCategories.get("categories").get(0).get("category").asText()).isEqualTo("ortografia");
+        assertThat(withCategories.get("categories").get(0).get("f05").asDouble()).isCloseTo(0.833333, within(1e-9));
+        JsonNode latestWithCategories = research("latest technical evaluation with categories",
+                researcher(get(evaluations + "/latest")), 200);
+        assertThat(latestWithCategories.get("id").asText()).isEqualTo(withCategories.get("id").asText());
+        assertThat(latestWithCategories.get("categories")).hasSize(2);
+        // A category whose P does not follow its counts is refused; so is a malformed one (bean validation).
+        mockMvc.perform(researcher(post(evaluations)).contentType(MediaType.APPLICATION_JSON)
+                        .content(evaluation(0.8, 0.5, 0.7142857, 40, 10, 40).replace("}",
+                                ",\"categories\":[{\"category\":\"ortografia\",\"tp\":30,\"fp\":5,\"fn\":10,"
+                                        + "\"precision\":0.8,\"recall\":0.75,\"f05\":0.79}]}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Category 'ortografia': Precision/recall do not match TP/FP/FN"));
+        mockMvc.perform(researcher(post(evaluations)).contentType(MediaType.APPLICATION_JSON)
+                        .content(evaluation(0.8, 0.5, 0.7142857, 40, 10, 40).replace("}",
+                                ",\"categories\":[{\"category\":\"\",\"tp\":-1,\"fp\":5,\"fn\":10,"
+                                        + "\"precision\":1.2,\"recall\":0.75,\"f05\":0.79}]}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.validationErrors").exists());
+    }
+
+    // ------------------------------------------------------------------ step 6b
+
+    /** The researcher declares a technical failure on an open run, then closes data collection. */
+    private void technicalFailureAndStudyClosure() throws Exception {
+        JsonNode p3 = research("create participant 3", researcher(post(studyUrl("/participants"))), 201);
+        UUID participant3 = UUID.fromString(p3.get("id").asText());
+        JsonNode issued = research("access-code P-003", researcher(
+                post(studyUrl("/participants/" + participant3 + "/access-code"))), 201, true);
+        plaintextCodes.add(issued.get("code").asText());
+        String runId = issued.get("runId").asText();
+
+        mockMvc.perform(researcher(post(studyUrl("/runs/" + runId + "/technical-failure")))
+                        .contentType(MediaType.APPLICATION_JSON).content(obj("reason", "corto")))
+                .andExpect(status().isBadRequest());
+        JsonNode failed = research("technical failure", researcher(post(studyUrl("/runs/" + runId + "/technical-failure")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(obj("reason", "La IA no respondio durante toda la sesion del piloto")), 200);
+        assertThat(failed.get("status").asText()).isEqualTo("TECHNICAL_FAILURE");
+        assertThat(failed.get("incidentCount").asInt()).isEqualTo(1);
+        assertThat(failed.get("incidents")).hasSize(1);
+        assertThat(failed.get("incidents").get(0).get("reason").asText()).isEqualTo("TECHNICAL_FAILURE");
+        assertThat(failed.get("incidents").get(0).get("at").asText()).isNotBlank();
+        mockMvc.perform(researcher(post(studyUrl("/runs/" + runId + "/technical-failure")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("reason", "Segunda declaracion posterior distinta")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Only pending or active runs can fail technically"));
+        // A failed run can be excluded from analysis, like a completed one.
+        JsonNode excluded = research("exclude failed run", researcher(post(studyUrl("/runs/" + runId + "/exclude")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(obj("reason", "Fallo tecnico documentado por el equipo")), 200);
+        assertThat(excluded.get("excluded").asBoolean()).isTrue();
+        assertThat(auditRepository.findByStudyIdOrderByCreatedAtDesc(studyId))
+                .extracting(event -> event.getAction()).contains("RUN_TECHNICAL_FAILURE", "RUN_EXCLUDED");
+
+        // Closing the study ends data collection; a closed study accepts no participants, codes or protocols.
+        JsonNode closed = research("close study", researcher(post(studyUrl("/close"))), 200);
+        assertThat(closed.get("status").asText()).isEqualTo("CLOSED");
+        mockMvc.perform(researcher(post(studyUrl("/close")))).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Study is already closed"));
+        mockMvc.perform(researcher(post(studyUrl("/participants")))).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Study is not active"));
+        mockMvc.perform(researcher(post(studyUrl("/protocols"))).contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("taskAPrompt", "Otra consigna A", "taskBPrompt", "Otra consigna B")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Study is closed"));
+        assertThat(auditRepository.findByStudyIdOrderByCreatedAtDesc(studyId))
+                .extracting(event -> event.getAction()).contains("STUDY_CLOSED");
+        // Results stay readable after closing.
+        mockMvc.perform(researcher(get(studyUrl("/results")))).andExpect(status().isOk());
     }
 
     // ------------------------------------------------------------------ step 7
 
     private void privacySweep() {
         assertThat(researchBodies).hasSizeGreaterThan(20);
-        assertThat(plaintextCodes).hasSize(4).doesNotHaveDuplicates();
+        assertThat(plaintextCodes).hasSize(5).doesNotHaveDuplicates();
         List<String> identity = List.of(
                 student1.id().toString(), student1.username(), student1.realName(), student1.notes(),
                 student2.id().toString(), student2.username(), student2.realName(), student2.notes(),

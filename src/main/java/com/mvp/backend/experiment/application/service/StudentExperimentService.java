@@ -26,6 +26,7 @@ import com.mvp.backend.research.domain.repository.StudyParticipantRepository;
 import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.NotFoundException;
+import com.mvp.backend.shared.text.WordTokenizer;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 
@@ -40,10 +41,14 @@ public class StudentExperimentService {
     static final String INVALID_CODE = "Access code is invalid or unavailable";
     static final String TOO_MANY_ATTEMPTS = "Too many failed redemption attempts, try again later";
     static final String DURATION_INCIDENT = "DURATION_INCONSISTENT";
+    static final String DURATION_SHORT_INCIDENT = "DURATION_IMPLAUSIBLY_SHORT";
     /** Nombre de la restriccion UNIQUE de {@code experiment_runs.completion_key} (V8 y entidad). */
     static final String COMPLETION_KEY_CONSTRAINT = "uk_runs_completion_key";
 
     private static final long DURATION_TOLERANCE_MS = 300_000L;
+    /** Por debajo de 1 s, o por encima de 200 palabras por minuto, la duracion reportada no es verosimil. */
+    private static final long MIN_PLAUSIBLE_DURATION_MS = 1_000L;
+    private static final double MAX_PLAUSIBLE_WPM = 200.0;
     private static final int MAX_FAILURES = 5;
     private static final Duration WINDOW = Duration.ofMinutes(5);
 
@@ -146,8 +151,12 @@ public class StudentExperimentService {
         }
     }
 
-    /** Fija la hora de inicio del servidor y la version del backend; idempotente sobre ACTIVE. */
-    @Transactional
+    /**
+     * Fija la hora de inicio del servidor y la version del backend; idempotente sobre ACTIVE. Una ejecucion
+     * canjeada cuyo codigo vencio antes de iniciar queda EXPIRED y ese cambio se conserva aunque la
+     * peticion responda 400 ({@code noRollbackFor}).
+     */
+    @Transactional(noRollbackFor = BusinessException.class)
     public ExperimentRunResponse start(UUID studentId, UUID runId) {
         ExperimentRun run = requireOwnRun(studentId, runId);
         domain(() -> run.start(clock.instant()));
@@ -155,10 +164,13 @@ public class StudentExperimentService {
         return ExperimentRunResponse.from(run);
     }
 
-    /** Ejecucion a restaurar: ACTIVE (pantalla de tarea) o PENDING ya canjeada (pantalla de confirmacion). */
+    /**
+     * Ejecucion a restaurar: ACTIVE (pantalla de tarea) o PENDING ya canjeada y aun vigente (pantalla
+     * de confirmacion). Una canjeada cuyo codigo vencio no se restaura: start la marcaria EXPIRED.
+     */
     @Transactional(readOnly = true)
     public ExperimentRunResponse active(UUID studentId) {
-        return runRepository.findRestorableByStudentId(studentId).stream()
+        return runRepository.findRestorableByStudentId(studentId, clock.instant()).stream()
                 .findFirst()
                 .map(ExperimentRunResponse::from)
                 .orElseThrow(() -> new NotFoundException("No experiment run to restore"));
@@ -166,9 +178,10 @@ public class StudentExperimentService {
 
     /**
      * Guarda el texto y la duracion monotonica reportada tal cual (medida primaria de PPM). Una
-     * duracion mayor que la transcurrida en el servidor (+ tolerancia) se registra como incidencia,
-     * nunca se rechaza ni se corrige. Idempotente por clave de finalizacion; la misma clave en otra
-     * ejecucion es un conflicto (409).
+     * duracion no verosimil se registra como incidencia, nunca se rechaza ni se corrige: mayor que la
+     * transcurrida en el servidor (+ tolerancia) → {@code DURATION_INCONSISTENT}; menor que 1 s o con
+     * mas de 200 palabras por minuto → {@code DURATION_IMPLAUSIBLY_SHORT}. Idempotente por clave de
+     * finalizacion; la misma clave en otra ejecucion es un conflicto (409).
      */
     @Transactional
     public ExperimentRunResponse complete(UUID studentId, UUID runId, CompleteExperimentRequest request) {
@@ -182,7 +195,10 @@ public class StudentExperimentService {
         Instant now = clock.instant();
         long serverElapsedMs = Duration.between(run.getStartedAt(), now).toMillis();
         if (request.durationMs() > serverElapsedMs + DURATION_TOLERANCE_MS) {
-            run.recordIncident(DURATION_INCIDENT);
+            run.recordIncident(DURATION_INCIDENT, now);
+        }
+        if (implausiblyShort(request.finalText(), request.durationMs())) {
+            run.recordIncident(DURATION_SHORT_INCIDENT, now);
         }
         domain(() -> run.complete(request.finalText(), request.durationMs(), request.completionKey(), now));
         run.recordAppVersion(request.appVersion());
@@ -206,6 +222,15 @@ public class StudentExperimentService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Misma tokenizacion que PPM ({@link WordTokenizer}): palabras / (ms / 60000) por encima del maximo verosimil. */
+    private static boolean implausiblyShort(String finalText, long durationMs) {
+        if (durationMs < MIN_PLAUSIBLE_DURATION_MS) {
+            return true;
+        }
+        double wordsPerMinute = WordTokenizer.wordCount(finalText) / (durationMs / 60_000.0);
+        return wordsPerMinute > MAX_PLAUSIBLE_WPM;
+    }
 
     /**
      * Una ejecucion ajena responde igual que una inexistente. Toma el bloqueo de fila (start,

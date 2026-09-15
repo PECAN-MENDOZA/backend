@@ -1,9 +1,13 @@
 package com.mvp.backend.experiment.domain.model;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.DynamicUpdate;
 
 import com.mvp.backend.research.domain.model.ProtocolTask;
@@ -11,6 +15,7 @@ import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.model.StudyParticipant;
 import com.mvp.backend.research.domain.model.StudyProtocol;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -19,6 +24,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -41,6 +48,9 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ExperimentRun {
+
+    /** Codigo fijo con el que un fallo tecnico entra al historial de incidencias (el motivo libre va en failureReason). */
+    public static final String TECHNICAL_FAILURE_INCIDENT = "TECHNICAL_FAILURE";
 
     @Id
     private UUID id;
@@ -103,6 +113,12 @@ public class ExperimentRun {
 
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
+
+    // Historial de incidencias (solo inserciones); incidentCount y failureReason son su resumen.
+    @OneToMany(mappedBy = "run", cascade = CascadeType.ALL, orphanRemoval = false, fetch = FetchType.LAZY)
+    @OrderBy("createdAt asc")
+    @BatchSize(size = 50)
+    private List<ExperimentIncident> incidents = new ArrayList<>();
 
     @Column(name = "excluded_at")
     private Instant excludedAt;
@@ -167,6 +183,11 @@ public class ExperimentRun {
         if (status != ExperimentRunStatus.PENDING || redeemedAt == null) {
             throw new IllegalStateException("Run is not ready to start");
         }
+        // Canjeada pero nunca iniciada dentro de la vigencia: vence igual que un codigo sin canjear.
+        if (accessCodeExpiresAt.isBefore(now)) {
+            expire(now);
+            throw new IllegalStateException("Access code expired before start");
+        }
         status = ExperimentRunStatus.ACTIVE;
         startedAt = now;
         accessCodeHash = null;
@@ -191,10 +212,19 @@ public class ExperimentRun {
         accessCodeHash = null;
     }
 
-    /** Registra una incidencia sin cambiar el estado ni el texto (auditoria, nunca correccion silenciosa). */
-    public void recordIncident(String reason) {
+    /**
+     * Registra una incidencia sin cambiar el estado ni el texto (auditoria, nunca correccion silenciosa).
+     * El motivo se anade al historial; {@code failureReason} conserva solo el ultimo para la vista de tabla.
+     */
+    public void recordIncident(String reason, Instant now) {
+        incidents.add(new ExperimentIncident(this, reason, now));
         incidentCount++;
         failureReason = reason;
+    }
+
+    /** Historial de incidencias en orden cronologico (solo lectura). */
+    public List<ExperimentIncident> getIncidents() {
+        return Collections.unmodifiableList(incidents);
     }
 
     /** Cancelacion explicita (alumno o investigador) antes de completar. Idempotente. */
@@ -206,8 +236,9 @@ public class ExperimentRun {
         if (status != ExperimentRunStatus.PENDING && status != ExperimentRunStatus.ACTIVE) {
             throw new IllegalStateException("Only pending or active runs can be cancelled");
         }
-        status = ExperimentRunStatus.CANCELLED;
+        // El motivo se valida antes de mutar: un motivo invalido no deja la entidad a medias.
         failureReason = requireReason(reason);
+        status = ExperimentRunStatus.CANCELLED;
         completedAt = now;
         accessCodeHash = null;
     }
@@ -235,8 +266,10 @@ public class ExperimentRun {
         if (status != ExperimentRunStatus.PENDING && status != ExperimentRunStatus.ACTIVE) {
             throw new IllegalStateException("Only pending or active runs can fail technically");
         }
-        status = ExperimentRunStatus.TECHNICAL_FAILURE;
+        // El motivo se valida antes de mutar: un motivo invalido no deja la entidad a medias.
         failureReason = requireReason(reason);
+        status = ExperimentRunStatus.TECHNICAL_FAILURE;
+        incidents.add(new ExperimentIncident(this, TECHNICAL_FAILURE_INCIDENT, now));
         incidentCount++;
         completedAt = now;
         accessCodeHash = null;

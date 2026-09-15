@@ -51,6 +51,11 @@ public class ResearchStudyController {
         return service.createStudy(researcherId(jwt), request);
     }
 
+    @PostMapping("/{studyId}/close")
+    public ResearchStudyResponse closeStudy(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID studyId) {
+        return service.closeStudy(researcherId(jwt), studyId);
+    }
+
     @PostMapping("/{studyId}/protocols")
     @ResponseStatus(HttpStatus.CREATED)
     public StudyProtocolResponse createProtocol(
@@ -117,6 +122,15 @@ public class ResearchStudyController {
             @PathVariable UUID runId,
             @Valid @RequestBody RunReasonRequest request) {
         return service.cancelRun(researcherId(jwt), studyId, runId, request);
+    }
+
+    @PostMapping("/{studyId}/runs/{runId}/technical-failure")
+    public ExperimentRunResponse failRunTechnically(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID studyId,
+            @PathVariable UUID runId,
+            @Valid @RequestBody RunReasonRequest request) {
+        return service.failRunTechnically(researcherId(jwt), studyId, runId, request);
     }
 
     private static UUID researcherId(Jwt jwt) {

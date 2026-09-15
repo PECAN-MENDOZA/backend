@@ -65,6 +65,8 @@ public class ResearchStudyService {
     private static final String ONE_OPEN_RUN_CONSTRAINT = "uk_runs_one_open_per_participant";
     /** Nombre explícito de la restricción UNIQUE de {@code research_studies.code} en V8. */
     private static final String STUDY_CODE_CONSTRAINT = "uk_study_code";
+    /** {@code UNIQUE (study_id, version)} de {@code study_protocols} en V8. */
+    private static final String PROTOCOL_VERSION_CONSTRAINT = "uk_protocol_version";
 
     private final ResearchStudyRepository studyRepository;
     private final StudyProtocolRepository protocolRepository;
@@ -130,11 +132,29 @@ public class ResearchStudyService {
         return toStudyResponse(study);
     }
 
+    /** Cierra la recogida de datos (spec §9.2): sin nuevos participantes, codigos ni protocolos. */
+    @Transactional
+    public ResearchStudyResponse closeStudy(UUID researcherId, UUID studyId) {
+        ResearchStudy study = studyRepository.findOwnedForUpdate(studyId, researcherId)
+                .orElseThrow(() -> new NotFoundException("Study not found"));
+        if (study.getStatus() == StudyStatus.CLOSED) {
+            throw new BusinessException("Study is already closed");
+        }
+        domain(study::close);
+        audit(requireResearcher(researcherId), study, "STUDY_CLOSED", study.getId(), null);
+        return toStudyResponse(study);
+    }
+
     // ---------------------------------------------------------------- protocols
 
+    /**
+     * Bloquea el estudio para que dos creaciones concurrentes no calculen la misma version; si aun asi
+     * la restriccion {@code uk_protocol_version} salta, se responde 409 y no un 500.
+     */
     @Transactional
     public StudyProtocolResponse createProtocol(UUID researcherId, UUID studyId, CreateProtocolRequest request) {
-        ResearchStudy study = requireOwnedStudy(researcherId, studyId);
+        ResearchStudy study = studyRepository.findOwnedForUpdate(studyId, researcherId)
+                .orElseThrow(() -> new NotFoundException("Study not found"));
         requireNotClosed(study);
         int version = protocolRepository.findFirstByStudyIdOrderByVersionDesc(studyId)
                 .map(StudyProtocol::getVersion)
@@ -144,7 +164,15 @@ public class ResearchStudyService {
             protocol.addTask(TaskVariant.TASK_A, request.taskAPrompt().strip());
             protocol.addTask(TaskVariant.TASK_B, request.taskBPrompt().strip());
         });
-        StudyProtocol saved = protocolRepository.save(protocol);
+        StudyProtocol saved;
+        try {
+            saved = protocolRepository.saveAndFlush(protocol);
+        } catch (DataIntegrityViolationException e) {
+            if (violates(e, PROTOCOL_VERSION_CONSTRAINT)) {
+                throw new ConflictException("Protocol version " + version + " already exists, retry");
+            }
+            throw e;
+        }
         audit(requireResearcher(researcherId), study, "PROTOCOL_CREATED", saved.getId(), "version=" + version);
         return StudyProtocolResponse.from(saved);
     }
@@ -282,11 +310,13 @@ public class ResearchStudyService {
                 next.condition());
     }
 
-    /** Un codigo PENDING nunca canjeado y ya vencido deja de bloquear al participante. */
+    /**
+     * Un codigo PENDING ya vencido deja de bloquear al participante, tanto si nunca se canjeo como si
+     * se canjeo y nunca se inicio (el telefono se cerro en la pantalla de confirmacion).
+     */
     private void expireStaleCodes(UUID participantId, Instant now) {
         for (ExperimentRun run : runRepository.findByParticipantIdOrderByCreatedAtAsc(participantId)) {
             if (run.getStatus() == ExperimentRunStatus.PENDING
-                    && run.getRedeemedAt() == null
                     && run.getAccessCodeExpiresAt().isBefore(now)) {
                 run.expire(now);
                 runRepository.save(run);
@@ -297,7 +327,7 @@ public class ResearchStudyService {
     @Transactional
     public ExperimentRunResponse revokeAccessCode(UUID researcherId, UUID studyId, UUID runId) {
         ResearchStudy study = requireOwnedStudy(researcherId, studyId);
-        ExperimentRun run = requireRun(studyId, runId);
+        ExperimentRun run = requireRunForUpdate(studyId, runId);
         if (run.getStatus() != ExperimentRunStatus.PENDING) {
             throw new BusinessException("Only a pending access code can be revoked");
         }
@@ -319,7 +349,7 @@ public class ResearchStudyService {
     @Transactional
     public ExperimentRunResponse cancelRun(UUID researcherId, UUID studyId, UUID runId, RunReasonRequest request) {
         ResearchStudy study = requireOwnedStudy(researcherId, studyId);
-        ExperimentRun run = requireRun(studyId, runId);
+        ExperimentRun run = requireRunForUpdate(studyId, runId);
         // run.cancel es idempotente sobre CANCELLED; aqui una segunda cancelacion no debe
         // aceptar otro motivo ni generar un nuevo evento de auditoria.
         if (!OPEN_STATUSES.contains(run.getStatus())) {
@@ -330,10 +360,25 @@ public class ResearchStudyService {
         return ExperimentRunResponse.from(run);
     }
 
+    /** Fallo tecnico declarado por el investigador (p. ej. la IA no respondio durante toda la sesion). */
+    @Transactional
+    public ExperimentRunResponse failRunTechnically(UUID researcherId, UUID studyId, UUID runId, RunReasonRequest request) {
+        ResearchStudy study = requireOwnedStudy(researcherId, studyId);
+        ExperimentRun run = requireRunForUpdate(studyId, runId);
+        // failTechnically es idempotente sobre TECHNICAL_FAILURE; una segunda declaracion no debe
+        // aceptar otro motivo ni generar un nuevo evento de auditoria.
+        if (!OPEN_STATUSES.contains(run.getStatus())) {
+            throw new BusinessException("Only pending or active runs can fail technically");
+        }
+        domain(() -> run.failTechnically(request.reason(), clock.instant()));
+        audit(requireResearcher(researcherId), study, "RUN_TECHNICAL_FAILURE", run.getId(), null);
+        return ExperimentRunResponse.from(run);
+    }
+
     @Transactional
     public ExperimentRunResponse excludeRun(UUID researcherId, UUID studyId, UUID runId, RunReasonRequest request) {
         ResearchStudy study = requireOwnedStudy(researcherId, studyId);
-        ExperimentRun run = requireRun(studyId, runId);
+        ExperimentRun run = requireRunForUpdate(studyId, runId);
         Researcher researcher = requireResearcher(researcherId);
         domain(() -> run.exclude(request.reason(), researcher, clock.instant()));
         audit(researcher, study, "RUN_EXCLUDED", run.getId(), null);
@@ -392,8 +437,12 @@ public class ResearchStudyService {
                 .orElseThrow(() -> new NotFoundException("Study not found"));
     }
 
-    private ExperimentRun requireRun(UUID studyId, UUID runId) {
-        return runRepository.findByIdAndParticipantStudyId(runId, studyId)
+    /**
+     * Toda transicion del investigador toma el bloqueo de fila: si el telefono completo la ejecucion
+     * entre la lectura y la escritura, aqui se relee COMPLETED y la transicion se rechaza (400).
+     */
+    private ExperimentRun requireRunForUpdate(UUID studyId, UUID runId) {
+        return runRepository.findByIdAndParticipantStudyIdForUpdate(runId, studyId)
                 .orElseThrow(() -> new NotFoundException("Run not found"));
     }
 

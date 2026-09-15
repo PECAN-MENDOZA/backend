@@ -58,10 +58,16 @@ POST /api/v1/research/studies/{studyId}/protocols
 
 POST /api/v1/research/studies/{studyId}/protocols/{protocolId}/activate
 → 200 {…,"status":"ACTIVE"}
+
+POST /api/v1/research/studies/{studyId}/close
+→ 200 {…,"status":"CLOSED"}   (sin cuerpo en la petición; 400 "Study is already closed" | "Only an active study can be closed")
 ```
 
 Activar el primer protocolo activa el estudio (`GET /api/v1/research/studies` → `status: ACTIVE`,
-`activeProtocolVersion: 1`). Antes de eso, crear participantes responde `400 "Study is not active"`.
+`activeProtocolVersion: 1`). Antes de eso, crear participantes responde `400 "Study is not active"`. Cerrar el
+estudio termina la recogida de datos (spec §9.2): no admite más participantes, códigos ni protocolos (400), pero
+los resultados, la anotación y el CSV de análisis siguen disponibles. Dos creaciones concurrentes de protocolo se
+serializan sobre el estudio; si aun así colisiona la versión, responde `409`.
 
 ### 3.2 Participantes y códigos (investigador)
 
@@ -87,14 +93,25 @@ su SHA-256 y caduca a los `RESEARCH_ACCESS_CODE_TTL` (30 min por defecto) si nad
 respuesta de investigación que contiene el código en claro. Mientras el participante tenga una ejecución
 abierta (PENDING o ACTIVE) no se emite otro; tras completar ambas condiciones tampoco.
 
-Gestión de ejecuciones (todas con `{"reason":"texto de 10 a 500 caracteres"}` cuando aplica):
+Gestión de ejecuciones (las que llevan motivo reciben `{"reason":"texto de 10 a 500 caracteres"}`):
 
 ```http
-GET  /api/v1/research/studies/{studyId}/runs                       → 200 [ExperimentRunResponse]  (sin texto final ni alumno)
-POST /api/v1/research/studies/{studyId}/access-codes/{runId}/revoke → 200 (solo PENDING; sin cuerpo)
-POST /api/v1/research/studies/{studyId}/runs/{runId}/cancel         → 200 (PENDING o ACTIVE)
-POST /api/v1/research/studies/{studyId}/runs/{runId}/exclude        → 200 (COMPLETED o TECHNICAL_FAILURE; una sola vez; nada se borra)
+GET  /api/v1/research/studies/{studyId}/runs                            → 200 [ExperimentRunResponse]  (sin texto final ni alumno)
+POST /api/v1/research/studies/{studyId}/access-codes/{runId}/revoke      → 200 ExperimentRunResponse (solo PENDING; la petición no lleva cuerpo)
+POST /api/v1/research/studies/{studyId}/runs/{runId}/cancel              → 200 (PENDING o ACTIVE; con motivo)
+POST /api/v1/research/studies/{studyId}/runs/{runId}/technical-failure   → 200 {…,"status":"TECHNICAL_FAILURE"} (PENDING o ACTIVE; con motivo)
+POST /api/v1/research/studies/{studyId}/runs/{runId}/exclude             → 200 (COMPLETED o TECHNICAL_FAILURE; una sola vez; nada se borra; con motivo)
 ```
+
+Toda transición del investigador toma el bloqueo de fila de la ejecución: si el teclado la completó entre la
+lectura y la escritura, se relee ya `COMPLETED` y la transición responde `400` (`"Only pending or active runs can
+be cancelled"` / `"… can fail technically"`) sin evento de auditoría. `technical-failure` deja `failureReason` con el
+motivo del investigador y añade `TECHNICAL_FAILURE` al historial de incidencias; una segunda declaración es `400`.
+
+`ExperimentRunResponse` incluye `incidentCount`, `failureReason` (el último motivo, para la tabla) e `incidents`, el
+historial completo y solo de inserciones: `[{"reason":"DURATION_INCONSISTENT","at":"…"}, …]`. Los motivos son
+códigos fijos (`AI_REQUEST_FAILED`, `MODEL_VERSION_CHANGED`, `DURATION_INCONSISTENT`, `DURATION_IMPLAUSIBLY_SHORT`,
+`TECHNICAL_FAILURE`); nunca contienen texto del alumno.
 
 ### 3.3 Sesión del alumno (teclado)
 
@@ -105,8 +122,9 @@ POST /api/v1/experiments/access-code/redeem        {"code":"K7MP2XQ9"}
    400 "Access code is invalid or unavailable" (desconocido, vencido, revocado, de otro alumno, ya iniciado)
    400 "Too many failed redemption attempts, try again later" (más de 5 fallos en 5 min por alumno)
 
-GET  /api/v1/experiments/runs/active               → 200 (ACTIVE, o PENDING ya canjeada) | 404 "No experiment run to restore"
+GET  /api/v1/experiments/runs/active               → 200 (ACTIVE, o PENDING ya canjeada y aún vigente) | 404 "No experiment run to restore"
 POST /api/v1/experiments/runs/{runId}/start        → 200 {…,"status":"ACTIVE","startedAt":"…"} (idempotente)
+                                                     400 "Access code expired before start" (canjeada pero iniciada después del vencimiento: queda EXPIRED)
 
 POST /api/v1/corrections/process                   (solo en ASSISTED, ver sección 6)
 {"texto_original":"ola mundo","id_ejecucion":"<runId>"}
@@ -128,10 +146,14 @@ POST /api/v1/experiments/runs/{runId}/cancel        {"reason":"ABANDONED"|"TECHN
 ```
 
 El código queda ligado al primer alumno que lo canjea (un alumno ocupa a lo sumo un participante por estudio);
-ese alumno puede volver a canjearlo hasta `start`, cualquier otro recibe el error genérico. `duracion_ms` es la
-duración monotónica medida por el teclado y se guarda tal cual: si supera lo transcurrido en el servidor + 5 min
-se registra la incidencia `DURATION_INCONSISTENT`, nunca se rechaza. Para la segunda condición el investigador
-emite un nuevo código (sección 3.2) y el teclado repite el ciclo.
+ese alumno puede volver a canjearlo hasta `start`, cualquier otro recibe el error genérico. Una ejecución canjeada
+que no se inicia dentro de la vigencia del código (30 min) vence igual que un código sin canjear: `start` la marca
+`EXPIRED`, `GET /runs/active` deja de restaurarla y el investigador puede emitir otro código. `duracion_ms` es la
+duración monotónica medida por el teclado y se guarda tal cual, nunca se rechaza ni se corrige: si supera lo
+transcurrido en el servidor + 5 min se registra la incidencia `DURATION_INCONSISTENT`; si es menor que 1 s o implica
+más de 200 palabras por minuto (misma tokenización que PPM), `DURATION_IMPLAUSIBLY_SHORT`. Ambas pueden coexistir y
+quedan en el historial `incidents` de la ejecución. Para la segunda condición el investigador emite un nuevo código
+(sección 3.2) y el teclado repite el ciclo.
 
 ### 3.4 Anotación ciega (investigador y evaluadores)
 
@@ -163,15 +185,26 @@ GET /api/v1/research/studies/{studyId}/analysis.csv   → 200 text/csv (una fila
 POST /api/v1/research/technical-evaluations
 {"modelVersion":"beto-lora-global-v1","datasetSha256":"<sha256 hex minúsculas del conjunto reservado>",
  "scorerVersion":"exact_token_edits_v1","precision":0.8,"recall":0.5,"fZeroFive":0.7142857,
- "truePositives":40,"falsePositives":10,"falseNegatives":40}
-→ 201 {…,"fOne":0.6153846,"createdAt":"…"}
+ "truePositives":40,"falsePositives":10,"falseNegatives":40,
+ "categories":[{"category":"ortografia","tp":30,"fp":5,"fn":10,"precision":0.857143,"recall":0.75,"f05":0.833333}]}
+→ 201 {…,"fOne":0.6153846,"categories":[…],"createdAt":"…"}
    400 "F0.5 does not match precision and recall (expected …)" | 400 "Precision/recall do not match TP/FP/FN"
+   400 "Category 'ortografia': …" (misma regla por categoría) | 400 "Category 'x' is repeated"
    400 {"validationErrors":{"scorerVersion":…}} si el scorer no es exact_token_edits_v1 o el hash no es SHA-256
 GET /api/v1/research/technical-evaluations[?modelVersion=…]         → 200 [ … ] (solo las del investigador)
 GET /api/v1/research/technical-evaluations/latest[?modelVersion=…]  → 200 | 404
 ```
 
-F0.5, precisión y recall viven solo aquí: el objeto de resultados del estudio nunca los incluye.
+F0.5, precisión y recall viven solo aquí: el objeto de resultados del estudio nunca los incluye. `categories`
+(spec §11.4) es opcional (hasta 50 entradas, nombres únicos tras recortar espacios): cada categoría se valida con
+las mismas reglas que el vector global, se guarda como JSON junto a la evaluación y se devuelve tal cual en
+`GET …/technical-evaluations` y `/latest` (lista vacía si no se envió).
+
+`GET …/analysis.csv` lleva una fila por ejecución completada × sugerencia evaluada con las columnas
+`pseudonym, condition, task, protocol_version, included, excluded, run_id, duration_ms, incident_reasons, word_count,
+orthography_errors, orthography_batch_id, final_text, suggestion_index, original_text, suggestion, semantic_score,
+accepted, semantic_batch_id`; `incident_reasons` es el historial de incidencias de la ejecución en orden, separado
+por `;` (vacío si no hubo).
 
 ## 4. CSV de anotación y flujo de evaluadores
 
@@ -281,7 +314,13 @@ declaración de éxito.
 - Deshacer una sugerencia aplicada: `{"acepto_correccion":false,"motivo":"UNDO"}` (sin `sugerencia_elegida`; si
   llegara `acepto_correccion=true` con `motivo=UNDO`, el backend lo trata igualmente como rechazo). Tras un UNDO
   no se puede volver a aceptar (`400 "Feedback cannot re-accept a corrected text after undo"`); un reenvío idéntico
-  es un no-op 200.
+  es un no-op 200. `fue_editada` solo puede ser `true` cuando la corrección quedó efectivamente aceptada: un UNDO o
+  un rechazo con `texto_final` distinto no cuenta como edición.
+- El feedback se guarda bajo el bloqueo de la sesión y se reenvía a la IA **después de confirmar** la transacción
+  (solo sesiones no experimentales, best-effort): una IA lenta o caída nunca retiene la fila ni deshace el feedback
+  guardado. Las llamadas a la IA están acotadas por `app.ai.connect-timeout` (5 s) y `app.ai.read-timeout` (90 s,
+  cubre el cold start); los fallos se registran solo con la clase de la excepción y el código HTTP, nunca con el
+  mensaje ni el cuerpo.
 - `complete` es idempotente por `completion_key` (UUID generado por el teclado y conservado hasta recibir 200):
   reintentar con la misma clave devuelve el mismo cuerpo; `duracion_ms` es la duración monotónica de toda la
   tarea; `app_version` se registra en la ejecución.

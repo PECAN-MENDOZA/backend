@@ -247,11 +247,11 @@ class ResearchResultsApiTests {
                 .andReturn();
         String csv = new String(download.getResponse().getContentAsByteArray(), UTF_8);
         assertThat(csv).startsWith("pseudonym,condition,task,protocol_version,included,excluded,run_id,")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1," + orthographyBatch
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,,4,1," + orthographyBatch
                         + ",uno dos tres cuatro,1,ola mundo,\"hola, mundo\",0,true," + semanticBatch + "\n")
-                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,4,1," + orthographyBatch
+                .contains("P-001,ASSISTED,TASK_A,1,true,false," + p1Assisted.getId() + ",120000,,4,1," + orthographyBatch
                         + ",uno dos tres cuatro,0,ke tal,que tal,2,false," + semanticBatch + "\n")
-                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,5,2," + orthographyBatch
+                .contains("P-001,UNASSISTED,TASK_A,1,true,false," + p1Unassisted.getId() + ",60000,,5,2," + orthographyBatch
                         + ",uno dos tres cuatro cinco,,,,,,\n")
                 .contains("P-004,UNASSISTED,TASK_A,1,false,true,")
                 .doesNotContain("alumno-", "Colegio", "@lab.edu", "T-");

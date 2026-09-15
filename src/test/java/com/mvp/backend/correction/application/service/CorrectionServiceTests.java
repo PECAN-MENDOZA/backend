@@ -12,7 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -90,7 +92,8 @@ class CorrectionServiceTests {
                 runRepository,
                 incidentRecorder,
                 new NoOpTransactionManager(),
-                new ObjectMapper());
+                new ObjectMapper(),
+                Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC));
         student = readyStudent("student_exp");
         assistedRun = activeRun(ExperimentCondition.ASSISTED);
         run = activeRun(ExperimentCondition.UNASSISTED);
@@ -424,6 +427,61 @@ class CorrectionServiceTests {
         assertThat(session.getAcceptedCorrection()).isFalse();
         // El deshacer limpia cualquier diff previamente derivado.
         verify(wordCorrectionRepository).deleteByCorrectionSessionId(session.getId());
+    }
+
+    @Test
+    void undoWithAFinalTextIsNotCountedAsAnEdit() {
+        var session = new CorrectionSession(student, "el nino iva");
+        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
+
+        // The keyboard reports the text left on screen after undoing; nothing was validated by the student.
+        var response = correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest("el nino iba", false, "el nino iva", "UNDO"));
+
+        assertThat(response.acceptedCorrection()).isFalse();
+        assertThat(response.wasEdited()).isFalse();
+        assertThat(session.isWasEdited()).isFalse();
+        assertThat(session.getFinalText()).isEqualTo("el nino iva");
+    }
+
+    @Test
+    void rejectedFeedbackWithADifferentFinalTextIsNotAnEditEither() {
+        var session = new CorrectionSession(student, "el nino iva");
+        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(session.getStudent()));
+        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
+
+        var response = correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest(null, false, "el nino ivaa"));
+
+        assertThat(response.acceptedCorrection()).isFalse();
+        assertThat(response.wasEdited()).isFalse();
+    }
+
+    @Test
+    void feedbackIsSavedEvenWhenTheAiClientThrows() {
+        var session = new CorrectionSession(student, "el nino iva");
+        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
+        when(wordCorrectionRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.doThrow(new IllegalStateException("boom"))
+                .when(aiCorrectionClient).sendFeedback(any(), anyString(), any(), anyBoolean());
+
+        var response = correctionService.registerFeedback(
+                student.getId(),
+                session.getId(),
+                new CorrectionFeedbackRequest("el nino iba", true, null));
+
+        assertThat(response.acceptedCorrection()).isTrue();
+        assertThat(session.getAcceptedCorrection()).isTrue();
+        verify(aiCorrectionClient).sendFeedback(student.getId(), "el nino iva", "el nino iba", true);
     }
 
     @Test

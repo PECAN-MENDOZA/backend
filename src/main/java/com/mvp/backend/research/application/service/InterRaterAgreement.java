@@ -1,15 +1,19 @@
 package com.mvp.backend.research.application.service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.mvp.backend.research.application.dto.AgreementSummary;
 
 /**
  * Kappa de Cohen con pesos lineales entre dos vectores de puntajes enteros sobre la misma escala
  * ordinal (0-2 semantica, o el rango observado de conteos ortograficos). Con pesos lineales
- * {@code d(a,b) = |a-b| / (k-1)}: {@code kappa = 1 - Do/De}, donde Do es el desacuerdo observado
- * medio y De el esperado por azar a partir de las marginales de cada evaluador. Indefinida (null)
- * cuando ambos vectores no tienen varianza (una sola categoria observada).
+ * {@code d(a,b) = |a-b| / (k-1)}, donde {@code k-1 = max - min} observado: {@code kappa = 1 - Do/De},
+ * Do es el desacuerdo observado medio y De el esperado por azar a partir de las marginales de cada
+ * evaluador. Se calcula solo sobre los valores observados (mapas valor -> frecuencia), nunca sobre
+ * el rango completo, asi un conteo aislado enorme no cuesta memoria ni tiempo. Indefinida (null)
+ * cuando no hay rango observado ({@code k-1 == 0}) o De es cero.
  */
 final class InterRaterAgreement {
 
@@ -21,9 +25,12 @@ final class InterRaterAgreement {
             throw new IllegalArgumentException("Both raters must score the same non-empty set of items");
         }
         int n = first.size();
-        int lo = Integer.MAX_VALUE;
-        int hi = Integer.MIN_VALUE;
+        long lo = Long.MAX_VALUE;
+        long hi = Long.MIN_VALUE;
         int exact = 0;
+        double observedDistance = 0;
+        Map<Integer, Integer> countsFirst = new HashMap<>();
+        Map<Integer, Integer> countsSecond = new HashMap<>();
         for (int i = 0; i < n; i++) {
             int a = first.get(i);
             int b = second.get(i);
@@ -32,30 +39,24 @@ final class InterRaterAgreement {
             if (a == b) {
                 exact++;
             }
+            observedDistance += Math.abs((long) a - b);
+            countsFirst.merge(a, 1, Integer::sum);
+            countsSecond.merge(b, 1, Integer::sum);
         }
         double exactAgreement = (double) exact / n;
-        int categories = hi - lo + 1;
-        if (categories == 1) {
+        long range = hi - lo;
+        if (range == 0) {
             return new AgreementSummary(true, null, exactAgreement);
         }
-        double[] marginalFirst = new double[categories];
-        double[] marginalSecond = new double[categories];
-        double observed = 0;
-        for (int i = 0; i < n; i++) {
-            int a = first.get(i) - lo;
-            int b = second.get(i) - lo;
-            marginalFirst[a]++;
-            marginalSecond[b]++;
-            observed += Math.abs(a - b);
-        }
-        observed /= (double) n * (categories - 1);
-        double expected = 0;
-        for (int a = 0; a < categories; a++) {
-            for (int b = 0; b < categories; b++) {
-                expected += (marginalFirst[a] / n) * (marginalSecond[b] / n) * Math.abs(a - b);
+        double observed = observedDistance / ((double) n * range);
+        double expectedDistance = 0;
+        for (Map.Entry<Integer, Integer> a : countsFirst.entrySet()) {
+            for (Map.Entry<Integer, Integer> b : countsSecond.entrySet()) {
+                expectedDistance += ((double) a.getValue() / n) * ((double) b.getValue() / n)
+                        * Math.abs((long) a.getKey() - b.getKey());
             }
         }
-        expected /= categories - 1;
+        double expected = expectedDistance / range;
         if (expected == 0) {
             return new AgreementSummary(true, null, exactAgreement);
         }

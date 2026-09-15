@@ -94,6 +94,11 @@ public class AnnotationItem {
         };
     }
 
+    /** Una revision de un evaluador invalida el consenso: el puntaje adjudicado vuelve a quedar vacio. */
+    public void clearAdjudicatedScore() {
+        adjudicatedScore = null;
+    }
+
     public void record(AnnotationSlot slot, int score) {
         if (score < 0) {
             throw new IllegalArgumentException("Score must be non-negative");

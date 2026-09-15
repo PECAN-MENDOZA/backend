@@ -12,6 +12,8 @@ import com.mvp.backend.research.domain.model.AnnotationSlot;
 /**
  * Resumen de un lote ciego. Nunca expone la correspondencia muestra -> participante/condicion ni el
  * contenido de las filas: solo tipo, tamano, hash, ranuras completas, historial de importaciones y acuerdo.
+ * {@code adjudicationCurrent} es true solo cuando existe una importacion ADJUDICATED vigente resuelta
+ * sobre las dos importaciones de evaluador vigentes; las metricas finales deben exigirlo.
  */
 public record AnnotationBatchResponse(
         UUID id,
@@ -22,7 +24,8 @@ public record AnnotationBatchResponse(
         Instant createdAt,
         List<AnnotationSlot> completedSlots,
         List<AnnotationImportResponse> imports,
-        AgreementSummary agreement) {
+        AgreementSummary agreement,
+        boolean adjudicationCurrent) {
 
     public record AnnotationImportResponse(
             UUID id,
@@ -51,7 +54,8 @@ public record AnnotationBatchResponse(
             AnnotationBatch batch,
             List<AnnotationSlot> completedSlots,
             List<AnnotationImport> imports,
-            AgreementSummary agreement) {
+            AgreementSummary agreement,
+            boolean adjudicationCurrent) {
         return new AnnotationBatchResponse(
                 batch.getId(),
                 batch.getKind(),
@@ -61,6 +65,7 @@ public record AnnotationBatchResponse(
                 batch.getCreatedAt(),
                 completedSlots,
                 imports.stream().map(AnnotationImportResponse::from).toList(),
-                agreement);
+                agreement,
+                adjudicationCurrent);
     }
 }

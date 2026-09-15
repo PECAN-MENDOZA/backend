@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -17,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
@@ -24,12 +27,15 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 import org.assertj.core.api.AbstractThrowableAssert;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.mvp.backend.correction.domain.model.CorrectionSession;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
@@ -199,6 +205,30 @@ class ResearchAnnotationServiceTests {
     }
 
     @Test
+    void exportNeutralisesFormulaCellsAndHashesTheEscapedBytes() {
+        ExperimentRun formula = completedRun(1, ExperimentCondition.ASSISTED, "=HYPERLINK(\"http://x\")");
+        ExperimentRun dash = completedRun(2, ExperimentCondition.UNASSISTED, "-Hola -dijo ella");
+        stubOwnedStudy();
+        stubResearcher();
+        when(runRepository.findByParticipantStudyIdOrderByCreatedAtAsc(studyId)).thenReturn(List.of(formula, dash));
+        stubBatchPersistence();
+
+        AnnotationBatchResponse batch = service.createBatch(researcherId, studyId, AnnotationKind.ORTHOGRAPHY);
+        List<AnnotationItem> items = savedItems();
+        AnnotationBatch saved = savedBatch();
+        when(batchRepository.findByIdAndStudyId(batch.id(), studyId)).thenReturn(Optional.of(saved));
+        when(itemRepository.findByBatchIdOrderByPositionAsc(batch.id())).thenReturn(items);
+        AnnotationCsvFile file = service.export(researcherId, studyId, batch.id());
+        String csv = new String(file.bytes(), UTF_8);
+
+        assertThat(csv).contains(",\" =HYPERLINK(\"\"http://x\"\")\",\n").contains(", -Hola -dijo ella,\n")
+                .doesNotContain(",=HYPERLINK", ",-Hola");
+        assertThat(batch.exportSha256()).isEqualTo(sha256(file.bytes())).isEqualTo(file.sha256());
+        // Sample codes are never altered by the guard.
+        assertThat(Pattern.compile("(?m)^T-[A-HJ-NP-Z2-9]{8},").matcher(csv).results().count()).isEqualTo(2);
+    }
+
+    @Test
     void batchRequiresCompletedRunsAndAnOwnedStudy() {
         when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.createBatch(researcherId, studyId, AnnotationKind.ORTHOGRAPHY))
@@ -213,6 +243,22 @@ class ResearchAnnotationServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Study has no completed runs to annotate");
         verify(batchRepository, never()).save(any());
+    }
+
+    @Test
+    void sampleCodeCollisionIsAConflictThatSuggestsRetryingTheBatchCreation() {
+        stubOwnedStudy();
+        stubResearcher();
+        when(runRepository.findByParticipantStudyIdOrderByCreatedAtAsc(studyId))
+                .thenReturn(List.of(completedRun(1, ExperimentCondition.ASSISTED, "uno")));
+        when(batchRepository.save(any(AnnotationBatch.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(itemRepository.saveAll(anyCollection())).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement", new ConstraintViolationException("dup", null, "uk_annotation_sample_code")));
+
+        assertThatThrownBy(() -> service.createBatch(researcherId, studyId, AnnotationKind.ORTHOGRAPHY))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Sample code collision, retry the batch creation");
+        verify(auditRepository, never()).save(any());
     }
 
     @Test
@@ -272,13 +318,13 @@ class ResearchAnnotationServiceTests {
         Fixture fixture = orthographyBatch("Hola, mundo", "dos");
         String a = fixture.codes().get(0);
         String b = fixture.codes().get(1);
-        String csv = "\uFEFFsample_code,text,score\r\n" + a + ",\"Hola, mundo\",3\r\n" + b + ",dos, 0 \r\n";
+        String csv = "\uFEFFsample_code,text,score\r\n" + a + ",\"Hola, mundo\",2\r\n" + b + ",dos, 0 \r\n";
         stubImportPersistence();
 
         AnnotationBatchResponse response = service.importScores(researcherId, studyId, fixture.batch().getId(),
                 AnnotationSlot.RATER_1, "  Ana ", csv.getBytes(UTF_8));
 
-        assertThat(fixture.items().get(0).getRater1Score()).isEqualTo(3);
+        assertThat(fixture.items().get(0).getRater1Score()).isEqualTo(2);
         assertThat(fixture.items().get(1).getRater1Score()).isZero();
         assertThat(response.imports()).hasSize(1);
         assertThat(response.imports().get(0).slot()).isEqualTo(AnnotationSlot.RATER_1);
@@ -298,11 +344,144 @@ class ResearchAnnotationServiceTests {
 
         stubImportPersistence();
         assertThatImportFails(fixture, "sample_code,score\n" + a + ",3\n" + b + ",2\n").hasMessageContaining("0, 1 or 2");
-        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.ADJUDICATED, "Consenso",
-                ("sample_code,score\n" + a + ",2\n" + b + ",0\n").getBytes(UTF_8));
-        assertThat(fixture.items().get(0).getAdjudicatedScore()).isEqualTo(2);
-        assertThat(fixture.items().get(1).getAdjudicatedScore()).isZero();
-        assertThat(fixture.items().get(0).getRater1Score()).isNull();
+        // Full exported layout: text columns are ignored, the score is the last column.
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_1, "Ana",
+                ("sample_code,original_text,suggestion,score\n" + a + ",ola,hola,2\n" + b + ",ke,que,0\n").getBytes(UTF_8));
+        assertThat(fixture.items().get(0).getRater1Score()).isEqualTo(2);
+        assertThat(fixture.items().get(1).getRater1Score()).isZero();
+        assertThat(fixture.items().get(0).getRater2Score()).isNull();
+        assertThat(fixture.items().get(0).getAdjudicatedScore()).isNull();
+    }
+
+    @Test
+    void orthographyScoreCannotExceedTheWordCount() {
+        Fixture fixture = orthographyBatch("uno dos tres", "  cuatro   cinco ");
+        String a = fixture.codes().get(0);
+        String b = fixture.codes().get(1);
+        stubResearcher();
+
+        assertThatImportFails(fixture, "sample_code,score\n" + a + ",4\n" + b + ",2\n")
+                .hasMessage("Score exceeds the word count of sample " + a);
+        assertThatImportFails(fixture, "sample_code,score\n" + a + ",3\n" + b + ",3\n")
+                .hasMessage("Score exceeds the word count of sample " + b);
+        verify(importRepository, never()).saveAndFlush(any());
+
+        stubImportPersistence();
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_1, "Ana",
+                ("sample_code,score\n" + a + ",3\n" + b + ",2\n").getBytes(UTF_8));
+        assertThat(fixture.items()).extracting(AnnotationItem::getRater1Score).containsExactly(3, 2);
+    }
+
+    @Test
+    void headerOnlyFileIsRejectedAsHavingNoRows() {
+        Fixture fixture = orthographyBatch("uno", "dos");
+        stubResearcher();
+
+        assertThatImportFails(fixture, "sample_code,score\n").hasMessageContaining("no rows");
+        assertThatImportFails(fixture, "sample_code,score").hasMessageContaining("no rows");
+        verify(importRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void importRowsMayContainQuotedCrLf() {
+        Fixture fixture = orthographyBatch("linea uno\r\nlinea dos", "dos");
+        String a = fixture.codes().get(0);
+        String b = fixture.codes().get(1);
+        stubImportPersistence();
+
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_1, "Ana",
+                ("sample_code,text,score\r\n" + a + ",\"linea uno\r\nlinea dos\",1\r\n" + b + ",dos,0\r\n").getBytes(UTF_8));
+
+        assertThat(fixture.items()).extracting(AnnotationItem::getRater1Score).containsExactly(1, 0);
+    }
+
+    // ------------------------------------------------------------ adjudication
+
+    @Test
+    void adjudicationRequiresBothRaterSlotsCurrentAndComplete() {
+        Fixture fixture = orthographyBatch("uno", "dos");
+        String a = fixture.codes().get(0);
+        String b = fixture.codes().get(1);
+        stubResearcher();
+        String csv = "sample_code,score\n" + a + ",1\n" + b + ",0\n";
+
+        assertThatThrownBy(() -> service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.ADJUDICATED, "Consenso", csv.getBytes(UTF_8)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Adjudication requires two complete rater imports");
+
+        // Only RATER_1 present and complete: still refused.
+        fixture.items().forEach(item -> item.record(AnnotationSlot.RATER_1, 1));
+        when(importRepository.findFirstByBatchIdAndSlotAndSupersededAtIsNull(fixture.batch().getId(), AnnotationSlot.RATER_1))
+                .thenReturn(Optional.of(new AnnotationImport(fixture.batch(), AnnotationSlot.RATER_1, 1, "Ana",
+                        sha256(csv.getBytes(UTF_8)), csv, researcher, NOW)));
+        assertThatThrownBy(() -> service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.ADJUDICATED, "Consenso", csv.getBytes(UTF_8)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Adjudication requires two complete rater imports");
+        verify(importRepository, never()).saveAndFlush(any());
+        assertThat(fixture.items()).allMatch(item -> item.getAdjudicatedScore() == null);
+    }
+
+    @Test
+    void adjudicationIsBoundToTheCurrentRaterImportsAndInvalidatedByAReimport() {
+        Fixture fixture = orthographyBatch("uno", "dos");
+        String a = fixture.codes().get(0);
+        String b = fixture.codes().get(1);
+        String r1 = "sample_code,score\n" + a + ",1\n" + b + ",0\n";
+        String r2 = "sample_code,score\n" + a + ",1\n" + b + ",1\n";
+        String consensus = "sample_code,score\n" + a + ",1\n" + b + ",1\n";
+        stubImportPersistence();
+        stubCurrentImports();
+
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_1, "Ana", r1.getBytes(UTF_8));
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_2, "Beto", r2.getBytes(UTF_8));
+        AnnotationBatchResponse adjudicated = service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.ADJUDICATED, "Consenso", consensus.getBytes(UTF_8));
+
+        AnnotationImport rater1 = current(AnnotationSlot.RATER_1);
+        AnnotationImport rater2 = current(AnnotationSlot.RATER_2);
+        AnnotationImport consensusImport = current(AnnotationSlot.ADJUDICATED);
+        assertThat(consensusImport.getBasedOnRater1ImportId()).isEqualTo(rater1.getId());
+        assertThat(consensusImport.getBasedOnRater2ImportId()).isEqualTo(rater2.getId());
+        assertThat(rater1.getBasedOnRater1ImportId()).isNull();
+        assertThat(adjudicated.adjudicationCurrent()).isTrue();
+        assertThat(adjudicated.completedSlots()).containsExactly(AnnotationSlot.RATER_1, AnnotationSlot.RATER_2, AnnotationSlot.ADJUDICATED);
+        assertThat(fixture.items()).extracting(AnnotationItem::getAdjudicatedScore).containsExactly(1, 1);
+
+        // Rater 1 revises: the adjudication is superseded, its scores cleared, and the event audited.
+        String r1v2 = "sample_code,score\n" + a + ",0\n" + b + ",0\n";
+        AnnotationBatchResponse revised = service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.RATER_1, "Ana", r1v2.getBytes(UTF_8));
+
+        assertThat(consensusImport.isCurrent()).isFalse();
+        assertThat(consensusImport.getSupersededAt()).isEqualTo(NOW);
+        assertThat(rater1.isCurrent()).isFalse();
+        assertThat(rater2.isCurrent()).isTrue();
+        assertThat(fixture.items()).allMatch(item -> item.getAdjudicatedScore() == null);
+        assertThat(fixture.items()).extracting(AnnotationItem::getRater1Score).containsExactly(0, 0);
+        assertThat(fixture.items()).extracting(AnnotationItem::getRater2Score).containsExactly(1, 1);
+        assertThat(revised.adjudicationCurrent()).isFalse();
+        assertThat(revised.completedSlots()).containsExactly(AnnotationSlot.RATER_1, AnnotationSlot.RATER_2);
+        assertThat(revised.imports()).hasSize(4);
+        assertThat(revised.imports().stream().filter(AnnotationBatchResponse.AnnotationImportResponse::current))
+                .extracting(AnnotationBatchResponse.AnnotationImportResponse::slot)
+                .containsExactlyInAnyOrder(AnnotationSlot.RATER_1, AnnotationSlot.RATER_2);
+        ArgumentCaptor<ResearchAuditEvent> events = ArgumentCaptor.forClass(ResearchAuditEvent.class);
+        verify(auditRepository, times(5)).save(events.capture());
+        assertThat(events.getAllValues()).extracting(ResearchAuditEvent::getAction).containsExactly(
+                "ANNOTATION_IMPORTED", "ANNOTATION_IMPORTED", "ANNOTATION_IMPORTED",
+                "ANNOTATION_ADJUDICATION_INVALIDATED", "ANNOTATION_IMPORTED");
+        assertThat(events.getAllValues().get(3).getTargetId()).isEqualTo(consensusImport.getId());
+        assertThat(String.valueOf(events.getAllValues().get(3).getDetail())).doesNotContain(a, b, "uno", "dos");
+
+        // A fresh adjudication over the revised pair is current again.
+        String consensus2 = "sample_code,score\n" + a + ",0\n" + b + ",1\n";
+        AnnotationBatchResponse again = service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.ADJUDICATED, "Consenso", consensus2.getBytes(UTF_8));
+        assertThat(again.adjudicationCurrent()).isTrue();
+        assertThat(current(AnnotationSlot.ADJUDICATED).getVersion()).isEqualTo(2);
+        assertThat(current(AnnotationSlot.ADJUDICATED).getBasedOnRater1ImportId()).isEqualTo(current(AnnotationSlot.RATER_1).getId());
     }
 
     @Test
@@ -332,7 +511,7 @@ class ResearchAnnotationServiceTests {
 
     @Test
     void reimportSupersedesThePreviousImportWithoutDeletingIt() {
-        Fixture fixture = orthographyBatch("uno", "dos");
+        Fixture fixture = orthographyBatch("uno dos", "dos tres");
         String a = fixture.codes().get(0);
         String b = fixture.codes().get(1);
         String v1 = "sample_code,score\n" + a + ",1\n" + b + ",0\n";
@@ -353,7 +532,11 @@ class ResearchAnnotationServiceTests {
                 v2.getBytes(UTF_8));
 
         ArgumentCaptor<AnnotationImport> saved = ArgumentCaptor.forClass(AnnotationImport.class);
-        verify(importRepository).saveAndFlush(saved.capture());
+        // The previous row is superseded and flushed BEFORE the new row is inserted (partial unique index).
+        InOrder order = inOrder(importRepository);
+        order.verify(importRepository).saveAndFlush(previous);
+        order.verify(importRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue()).isNotSameAs(previous);
         assertThat(saved.getValue().getVersion()).isEqualTo(2);
         assertThat(saved.getValue().getContent()).isEqualTo(v2);
         assertThat(saved.getValue().isCurrent()).isTrue();
@@ -453,7 +636,8 @@ class ResearchAnnotationServiceTests {
     private Fixture fixture(AnnotationBatch batch, List<AnnotationItem> items) {
         batch.freeze(items.size(), "f".repeat(64));
         stubOwnedStudy();
-        when(batchRepository.findByIdAndStudyId(batch.getId(), studyId)).thenReturn(Optional.of(batch));
+        lenient().when(batchRepository.findByIdAndStudyId(batch.getId(), studyId)).thenReturn(Optional.of(batch));
+        lenient().when(batchRepository.findByIdAndStudyIdForUpdate(batch.getId(), studyId)).thenReturn(Optional.of(batch));
         when(itemRepository.findByBatchIdOrderByPositionAsc(batch.getId())).thenReturn(items);
         return new Fixture(batch, items, items.stream().map(AnnotationItem::getSampleCode).toList());
     }
@@ -469,10 +653,29 @@ class ResearchAnnotationServiceTests {
         stubResearcher();
         List<AnnotationImport> stored = new ArrayList<>();
         when(importRepository.saveAndFlush(any(AnnotationImport.class))).thenAnswer(inv -> {
-            stored.add(inv.getArgument(0));
+            if (!stored.contains(inv.<AnnotationImport>getArgument(0))) {
+                stored.add(inv.getArgument(0));
+            }
             return inv.getArgument(0);
         });
         when(importRepository.findByBatchIdOrderByVersionAsc(any())).thenAnswer(inv -> List.copyOf(stored));
+    }
+
+    /** Resuelve la importacion vigente y la ultima version de cada ranura sobre lo guardado por saveAndFlush. */
+    private void stubCurrentImports() {
+        when(importRepository.findFirstByBatchIdAndSlotAndSupersededAtIsNull(any(), any())).thenAnswer(inv ->
+                stored().stream().filter(i -> i.getSlot() == inv.getArgument(1) && i.isCurrent()).findFirst());
+        when(importRepository.findFirstByBatchIdAndSlotOrderByVersionDesc(any(), any())).thenAnswer(inv ->
+                stored().stream().filter(i -> i.getSlot() == inv.getArgument(1))
+                        .max(Comparator.comparingInt(AnnotationImport::getVersion)));
+    }
+
+    private List<AnnotationImport> stored() {
+        return importRepository.findByBatchIdOrderByVersionAsc(null);
+    }
+
+    private AnnotationImport current(AnnotationSlot slot) {
+        return stored().stream().filter(i -> i.getSlot() == slot && i.isCurrent()).findFirst().orElseThrow();
     }
 
     private AbstractThrowableAssert<?, ? extends Throwable> assertThatImportFails(Fixture fixture, String csv) {

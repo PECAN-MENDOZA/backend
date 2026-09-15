@@ -38,13 +38,36 @@ final class AnnotationCsv {
         csv.append('\n');
     }
 
+    /**
+     * Celda segura ante formulas y luego entrecomillado RFC 4180. Una celda que empieza por
+     * {@code = + - @ \t \r} (tambien tras espacios o caracteres de control iniciales) recibe un
+     * espacio inicial: sigue legible para el evaluador (un apostrofo romperia las rayas de dialogo)
+     * y Excel/LibreOffice ya no la evaluan. Los codigos de muestra ({@code T-...}) nunca lo activan.
+     */
     static String escape(String value) {
         if (value == null || value.isEmpty()) {
             return "";
         }
-        boolean quote = value.indexOf(',') >= 0 || value.indexOf('"') >= 0
-                || value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0;
-        return quote ? "\"" + value.replace("\"", "\"\"") + "\"" : value;
+        String safe = startsFormula(value) ? " " + value : value;
+        boolean quote = safe.indexOf(',') >= 0 || safe.indexOf('"') >= 0
+                || safe.indexOf('\n') >= 0 || safe.indexOf('\r') >= 0;
+        return quote ? "\"" + safe.replace("\"", "\"\"") + "\"" : safe;
+    }
+
+    private static boolean startsFormula(String value) {
+        char first = value.charAt(0);
+        if (first == '\t' || first == '\r') {
+            return true;
+        }
+        int i = 0;
+        while (i < value.length() && (Character.isWhitespace(value.charAt(i)) || Character.isISOControl(value.charAt(i)))) {
+            i++;
+        }
+        if (i >= value.length()) {
+            return false;
+        }
+        char c = value.charAt(i);
+        return c == '=' || c == '+' || c == '-' || c == '@';
     }
 
     /** Decodifica UTF-8 estricto, quita el BOM y rechaza NUL antes de parsear. */

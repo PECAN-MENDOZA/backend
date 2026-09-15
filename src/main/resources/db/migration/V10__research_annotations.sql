@@ -40,7 +40,9 @@ CREATE TABLE annotation_items (
 );
 
 -- Cada importacion se conserva (autor, fecha, lote, hash, version y contenido); una sustitucion
--- marca superseded_at en la anterior y nunca la borra.
+-- marca superseded_at en la anterior y nunca la borra. Una importacion ADJUDICATED referencia las dos
+-- importaciones de evaluador vigentes que resolvio: si alguna se reemplaza, la adjudicacion se supera.
+-- Nombres de restriccion sin prefijos comunes para que la traduccion a 409 por nombre sea exacta.
 CREATE TABLE annotation_imports (
     id UUID PRIMARY KEY,
     batch_id UUID NOT NULL REFERENCES annotation_batches(id),
@@ -52,12 +54,22 @@ CREATE TABLE annotation_imports (
     imported_by UUID NOT NULL REFERENCES researcher_users(id),
     imported_at TIMESTAMP WITH TIME ZONE NOT NULL,
     superseded_at TIMESTAMP WITH TIME ZONE,
-    CONSTRAINT uk_annotation_import UNIQUE (batch_id, slot, file_sha256),
-    CONSTRAINT uk_annotation_import_version UNIQUE (batch_id, slot, version),
+    based_on_rater1_import_id UUID REFERENCES annotation_imports(id),
+    based_on_rater2_import_id UUID REFERENCES annotation_imports(id),
+    CONSTRAINT uk_ann_import_hash UNIQUE (batch_id, slot, file_sha256),
+    CONSTRAINT uk_ann_import_version UNIQUE (batch_id, slot, version),
     CONSTRAINT ck_annotation_slot CHECK (slot IN ('RATER_1', 'RATER_2', 'ADJUDICATED')),
     CONSTRAINT ck_annotation_import_version CHECK (version >= 1),
-    CONSTRAINT ck_annotation_import_hash CHECK (file_sha256 ~ '^[0-9a-f]{64}$')
+    CONSTRAINT ck_annotation_import_hash CHECK (file_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_annotation_import_basis CHECK (
+        (slot = 'ADJUDICATED' AND based_on_rater1_import_id IS NOT NULL AND based_on_rater2_import_id IS NOT NULL)
+        OR (slot <> 'ADJUDICATED' AND based_on_rater1_import_id IS NULL AND based_on_rater2_import_id IS NULL)
+    )
 );
+
+-- Respaldo del bloqueo por lote: a lo sumo una importacion vigente por ranura. El servicio supera
+-- la anterior (y la vuelca) antes de insertar la nueva para no violar el indice transitoriamente.
+CREATE UNIQUE INDEX uk_ann_import_current ON annotation_imports(batch_id, slot) WHERE superseded_at IS NULL;
 
 CREATE INDEX idx_annotation_batches_study ON annotation_batches(study_id, created_at DESC);
 CREATE INDEX idx_annotation_items_batch ON annotation_items(batch_id, position);

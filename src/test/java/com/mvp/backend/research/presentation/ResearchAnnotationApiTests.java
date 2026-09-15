@@ -34,6 +34,7 @@ import com.mvp.backend.experiment.domain.model.AccessCode;
 import com.mvp.backend.experiment.domain.model.ExperimentCondition;
 import com.mvp.backend.experiment.domain.model.ExperimentRun;
 import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
+import com.mvp.backend.research.domain.model.AnnotationImport;
 import com.mvp.backend.research.domain.model.AnnotationSlot;
 import com.mvp.backend.research.domain.model.ResearchStudy;
 import com.mvp.backend.research.domain.model.Researcher;
@@ -145,6 +146,7 @@ class ResearchAnnotationApiTests {
                 .andExpect(jsonPath("$.agreement.weightedKappa").doesNotExist()));
         UUID batchId = UUID.fromString(batch.get("id").asText());
         assertThat(batch.toString()).doesNotContain("P-00", "ASSISTED", assistedText, "T-");
+        assertThat(batch.get("adjudicationCurrent").asBoolean()).isFalse();
 
         MvcResult download = mockMvc.perform(asResearcher(researcherId, get(base + "/" + batchId + "/export")))
                 .andExpect(status().isOk())
@@ -163,6 +165,12 @@ class ResearchAnnotationApiTests {
         List<String> codes = itemRepository.findByBatchIdOrderByPositionAsc(batchId).stream()
                 .map(item -> item.getSampleCode()).toList();
         assertThat(codes).hasSize(2).allMatch(code -> code.matches("T-" + AccessCode.PATTERN));
+
+        // Adjudication before the two raters is refused.
+        mockMvc.perform(asResearcher(researcherId, upload(batchId, "ADJUDICATED", "Consenso",
+                        "sample_code,score\n" + codes.get(0) + ",1\n" + codes.get(1) + ",0\n")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Adjudication requires two complete rater imports"));
 
         // Rater 1 fills the score column of the exported file; rater 2 sends the minimal layout.
         String filledExport = csv.replace("\"\"\",\n", "\"\"\",2\n").replace("ayuda\",\n", "ayuda\",0\n");
@@ -203,9 +211,29 @@ class ResearchAnnotationApiTests {
 
         mockMvc.perform(asResearcher(researcherId, upload(batchId, "ADJUDICATED", "Consenso", revised)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.completedSlots.length()").value(3));
+                .andExpect(jsonPath("$.completedSlots.length()").value(3))
+                .andExpect(jsonPath("$.adjudicationCurrent").value(true));
         assertThat(itemRepository.findByBatchIdOrderByPositionAsc(batchId))
                 .allMatch(item -> item.score(AnnotationSlot.ADJUDICATED) != null);
+
+        // A rater revision after adjudication supersedes the adjudication and clears its scores.
+        String rater1Revised = "sample_code,score\n" + codes.get(0) + ",0\n" + codes.get(1) + ",0\n";
+        mockMvc.perform(asResearcher(researcherId, upload(batchId, "RATER_1", "Ana", rater1Revised)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.completedSlots.length()").value(2))
+                .andExpect(jsonPath("$.adjudicationCurrent").value(false))
+                .andExpect(jsonPath("$.imports.length()").value(5))
+                .andExpect(jsonPath("$.imports[?(@.slot == 'ADJUDICATED')].current").value(false))
+                .andExpect(jsonPath("$.imports[?(@.slot == 'RATER_1' && @.current == true)].version").value(2));
+        assertThat(itemRepository.findByBatchIdOrderByPositionAsc(batchId))
+                .allMatch(item -> item.score(AnnotationSlot.ADJUDICATED) == null);
+        assertThat(importRepository.findByBatchIdOrderByVersionAsc(batchId))
+                .filteredOn(AnnotationImport::isCurrent)
+                .extracting(AnnotationImport::getSlot)
+                .containsExactlyInAnyOrder(AnnotationSlot.RATER_1, AnnotationSlot.RATER_2);
+        mockMvc.perform(asResearcher(researcherId, get(base + "/" + batchId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.adjudicationCurrent").value(false));
 
         mockMvc.perform(asResearcher(researcherId, get(base)))
                 .andExpect(status().isOk())
@@ -215,7 +243,8 @@ class ResearchAnnotationApiTests {
 
         assertThat(auditRepository.findByStudyIdOrderByCreatedAtDesc(study.getId()))
                 .extracting(event -> event.getAction())
-                .contains("ANNOTATION_BATCH_CREATED", "ANNOTATION_BATCH_EXPORTED", "ANNOTATION_IMPORTED");
+                .contains("ANNOTATION_BATCH_CREATED", "ANNOTATION_BATCH_EXPORTED", "ANNOTATION_IMPORTED",
+                        "ANNOTATION_ADJUDICATION_INVALIDATED");
         assertThat(auditRepository.findByStudyIdOrderByCreatedAtDesc(study.getId()))
                 .allSatisfy(event -> assertThat(String.valueOf(event.getDetail()))
                         .doesNotContain(codes.get(0), codes.get(1), "Hola", "P-00"));
@@ -230,8 +259,8 @@ class ResearchAnnotationApiTests {
             CorrectionSession accepted = new CorrectionSession(student, "ola mundo", run);
             accepted.complete("hola mundo", 0, "[\"hola, mundo\"]", 10L);
             accepted.registerFeedback("hola, mundo", null, true, 1, null);
-            CorrectionSession rejected = new CorrectionSession(student, "ke tal", run);
-            rejected.complete("que tal", 0, "[\"que tal?\"]", 10L);
+            CorrectionSession rejected = new CorrectionSession(student, "=ke tal", run);
+            rejected.complete("-que tal", 0, "[\"que tal?\"]", 10L);
             rejected.registerFeedback(null, null, false, 0, "UNDO");
             sessionRepository.saveAll(List.of(accepted, rejected));
         });
@@ -245,8 +274,8 @@ class ResearchAnnotationApiTests {
                 .andReturn().getResponse().getContentAsByteArray(), UTF_8);
         assertThat(csv).startsWith("sample_code,original_text,suggestion,score\n")
                 .contains(",ola mundo,\"hola, mundo\",\n")
-                .contains(",ke tal,que tal,\n")
-                .doesNotContain("que tal?", "final asistido", "final sin ayuda", "ASSISTED", "P-00");
+                .contains(", =ke tal, -que tal,\n")
+                .doesNotContain("que tal?", "final asistido", "final sin ayuda", "ASSISTED", "P-00", ",=ke", ",-que");
 
         List<String> codes = itemRepository.findByBatchIdOrderByPositionAsc(batchId).stream()
                 .map(item -> item.getSampleCode()).toList();

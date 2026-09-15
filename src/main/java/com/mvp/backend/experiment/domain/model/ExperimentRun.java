@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
+import org.hibernate.annotations.DynamicUpdate;
+
 import com.mvp.backend.research.domain.model.ProtocolTask;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.model.StudyParticipant;
@@ -33,6 +35,9 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "experiment_runs",
         uniqueConstraints = @UniqueConstraint(name = "uk_runs_completion_key", columnNames = "completion_key"))
+// Defensa en profundidad: un UPDATE solo escribe las columnas que cambiaron, de modo que un
+// escritor concurrente (incidencia, version del modelo) nunca pisa el estado o el texto final.
+@DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ExperimentRun {

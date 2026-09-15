@@ -27,6 +27,12 @@ public interface ExperimentRunRepository extends JpaRepository<ExperimentRun, UU
     Optional<ExperimentRun> findByIdAndParticipantStudentIdForUpdate(
             @Param("runId") UUID runId, @Param("studentId") UUID studentId);
 
+    // Registro de incidencias en transaccion propia: el bloqueo evita que dos fallos simultaneos
+    // lean el mismo contador y se pierda uno (incidentCount++ sobre una copia obsoleta).
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from ExperimentRun r where r.id = :id")
+    Optional<ExperimentRun> findByIdForUpdate(@Param("id") UUID id);
+
     Optional<ExperimentRun> findByIdAndParticipantStudyId(UUID runId, UUID studyId);
 
     // El indice unico parcial garantiza a lo sumo una ejecucion abierta por hash; si hubiera mas,

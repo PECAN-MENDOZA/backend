@@ -8,10 +8,13 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.mvp.backend.correction.domain.model.CorrectionSession;
+
+import jakarta.persistence.LockModeType;
 
 public interface CorrectionSessionRepository extends JpaRepository<CorrectionSession, UUID> {
 
@@ -28,6 +31,12 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
     }
 
     Optional<CorrectionSession> findByIdAndStudentId(UUID id, UUID studentId);
+
+    // El feedback se serializa por sesion: dos envios concurrentes (reintento del teclado, undo)
+    // se aplican uno tras otro sobre el estado ya confirmado y no sobre una copia obsoleta.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from CorrectionSession s where s.id = :id and s.student.id = :studentId")
+    Optional<CorrectionSession> findByIdAndStudentIdForUpdate(@Param("id") UUID id, @Param("studentId") UUID studentId);
 
     Page<CorrectionSession> findByStudentIdOrderByCreatedAtDesc(UUID studentId, Pageable pageable);
 

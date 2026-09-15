@@ -109,7 +109,7 @@ class ResearchStudyServiceTests {
                 auditRepository,
                 researcherRepository,
                 transactionManager,
-                new ResearchProperties(TTL),
+                new ResearchProperties(TTL, null, null),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         researcher = new Researcher("lab@example.edu", "hash");
         researcherId = researcher.getId();

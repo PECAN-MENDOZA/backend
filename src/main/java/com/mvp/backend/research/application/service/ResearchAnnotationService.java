@@ -24,11 +24,8 @@ import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
-import com.mvp.backend.correction.application.service.OfferedSuggestions;
 import com.mvp.backend.correction.domain.model.CorrectionSession;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.experiment.domain.model.AccessCode;
@@ -60,10 +57,11 @@ import com.mvp.backend.shared.exception.NotFoundException;
  * el texto a evaluar: nunca condicion, seudonimo, orden, version del modelo ni resultado esperado.
  * La correspondencia muestra -> ejecucion/sesion vive unicamente en {@code annotation_items}.
  *
- * <p>Sugerencia evaluada en lotes semanticos: la que el alumno acepto ({@code selectedSuggestion})
- * cuando la sesion registro aceptacion; en cualquier otro caso (rechazo, UNDO, sin feedback) la
- * primera sugerencia ofrecida, que es la que el teclado marca como recomendada. Asi TAS mide la
- * sugerencia con efecto real sobre el texto y, si no la hubo, la que el modelo propuso en primer lugar.
+ * <p>Sugerencia evaluada en lotes semanticos ({@link SessionSuggestions}): la que el alumno acepto
+ * ({@code selectedSuggestion}) cuando la sesion registro aceptacion; en cualquier otro caso (rechazo,
+ * UNDO, sin feedback) la primera sugerencia ofrecida, que es la que el teclado marca como recomendada.
+ * Asi TAS mide la sugerencia con efecto real sobre el texto y, si no la hubo, la que el modelo propuso
+ * en primer lugar.
  */
 @Service
 public class ResearchAnnotationService {
@@ -77,8 +75,6 @@ public class ResearchAnnotationService {
     private static final String SAMPLE_CODE_CONSTRAINT = "uk_annotation_sample_code";
     private static final String IMPORT_VERSION_CONSTRAINT = "uk_ann_import_version";
     private static final String IMPORT_CURRENT_CONSTRAINT = "uk_ann_import_current";
-    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
-    };
 
     private final ResearchStudyRepository studyRepository;
     private final ExperimentRunRepository runRepository;
@@ -202,20 +198,9 @@ public class ResearchAnnotationService {
                 continue;
             }
             items.add(new AnnotationItem(batch, uniqueCode(codes), items.size(), run, session,
-                    evaluatedSuggestionIndex(session, offered)));
+                    SessionSuggestions.evaluatedIndex(session, offered)));
         }
         return items;
-    }
-
-    /** Ver la nota de clase: sugerencia aceptada si la hubo, si no la primera ofrecida (recomendada). */
-    private static int evaluatedSuggestionIndex(CorrectionSession session, List<String> offered) {
-        if (Boolean.TRUE.equals(session.getAcceptedCorrection()) && session.getSelectedSuggestion() != null) {
-            int index = offered.indexOf(session.getSelectedSuggestion());
-            if (index >= 0) {
-                return index;
-            }
-        }
-        return 0;
     }
 
     private <T> List<T> shuffled(List<T> source) {
@@ -270,15 +255,7 @@ public class ResearchAnnotationService {
     }
 
     private List<String> offeredSuggestions(CorrectionSession session) {
-        List<String> alternatives = List.of();
-        if (session.getSuggestionsJson() != null) {
-            try {
-                alternatives = objectMapper.readValue(session.getSuggestionsJson(), STRING_LIST);
-            } catch (JacksonException e) {
-                throw new IllegalStateException("Could not deserialize suggestions", e);
-            }
-        }
-        return OfferedSuggestions.of(session.getCorrectedText(), alternatives);
+        return SessionSuggestions.offered(objectMapper, session);
     }
 
     // ------------------------------------------------------------------ import
@@ -462,12 +439,9 @@ public class ResearchAnnotationService {
         return score;
     }
 
-    /** Palabras del texto evaluado: cota superior del conteo ortografico (0 si esta en blanco). */
+    /** Palabras del texto evaluado: cota superior del conteo ortografico, con la misma tokenizacion que PEO. */
     static int wordCount(String text) {
-        if (text == null || text.isBlank()) {
-            return 0;
-        }
-        return text.strip().split("\\s+").length;
+        return StudyMetricsService.wordCount(text);
     }
 
     // ----------------------------------------------------------------- summary

@@ -197,7 +197,7 @@ class ResearchStudyServiceTests {
         when(studyRepository.saveAndFlush(any(ResearchStudy.class))).thenThrow(new DataIntegrityViolationException(
                 "could not execute statement",
                 new ConstraintViolationException("could not execute statement", new SQLException("duplicate key"),
-                        "research_studies_code_key")));
+                        "uk_study_code")));
 
         assertThatThrownBy(() -> service.createStudy(researcherId, new CreateStudyRequest("EXP-09", "Duplicado")))
                 .isInstanceOf(ConflictException.class)

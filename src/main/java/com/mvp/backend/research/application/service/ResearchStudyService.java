@@ -63,8 +63,8 @@ public class ResearchStudyService {
     private static final String REVOKED_REASON = "Access code revoked by the researcher";
     private static final String ACCESS_CODE_HASH_CONSTRAINT = "uk_runs_access_code_hash";
     private static final String ONE_OPEN_RUN_CONSTRAINT = "uk_runs_one_open_per_participant";
-    /** V8 declara {@code code ... UNIQUE} sin nombre; PostgreSQL lo bautiza {@code <tabla>_code_key}. */
-    private static final String STUDY_CODE_CONSTRAINT = "research_studies_code_key";
+    /** Nombre explícito de la restricción UNIQUE de {@code research_studies.code} en V8. */
+    private static final String STUDY_CODE_CONSTRAINT = "uk_study_code";
 
     private final ResearchStudyRepository studyRepository;
     private final StudyProtocolRepository protocolRepository;

@@ -1,6 +1,6 @@
 CREATE TABLE research_studies (
     id UUID PRIMARY KEY,
-    code VARCHAR(40) NOT NULL UNIQUE,
+    code VARCHAR(40) NOT NULL CONSTRAINT uk_study_code UNIQUE,
     title VARCHAR(160) NOT NULL,
     status VARCHAR(20) NOT NULL,
     next_participant_number INTEGER NOT NULL DEFAULT 1,

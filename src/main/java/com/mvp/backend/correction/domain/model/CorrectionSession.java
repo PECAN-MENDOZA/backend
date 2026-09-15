@@ -3,6 +3,7 @@ package com.mvp.backend.correction.domain.model;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.mvp.backend.experiment.domain.model.ExperimentRun;
 import com.mvp.backend.student.domain.model.Student;
 
 import jakarta.persistence.Column;
@@ -57,13 +58,30 @@ public class CorrectionSession {
     @Column(name = "was_edited", nullable = false)
     private boolean wasEdited;
 
+    @Column(name = "feedback_reason", length = 40)
+    private String feedbackReason;
+
+    // Solo cuando la correccion se pidio dentro de una ejecucion experimental (uso normal: null).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "experiment_run_id")
+    private ExperimentRun experimentRun;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     public CorrectionSession(Student student, String originalText) {
+        this(student, originalText, null);
+    }
+
+    public CorrectionSession(Student student, String originalText, ExperimentRun experimentRun) {
         this.id = UUID.randomUUID();
         this.student = student;
         this.originalText = originalText;
+        this.experimentRun = experimentRun;
+    }
+
+    public boolean isExperimental() {
+        return experimentRun != null;
     }
 
     @PrePersist
@@ -84,11 +102,17 @@ public class CorrectionSession {
         this.responseTimeMs = responseTimeMs;
     }
 
-    public void registerFeedback(String selectedSuggestion, String finalText, boolean acceptedCorrection, int correctionsCount) {
+    public void registerFeedback(
+            String selectedSuggestion,
+            String finalText,
+            boolean acceptedCorrection,
+            int correctionsCount,
+            String feedbackReason) {
         this.selectedSuggestion = selectedSuggestion;
         this.finalText = finalText;
         this.wasEdited = finalText != null && !finalText.equals(selectedSuggestion);
         this.acceptedCorrection = acceptedCorrection;
         this.correctionsCount = correctionsCount;
+        this.feedbackReason = feedbackReason;
     }
 }

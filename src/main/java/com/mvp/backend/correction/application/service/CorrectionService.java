@@ -21,6 +21,11 @@ import com.mvp.backend.correction.domain.model.WordCorrection;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
+import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
+import com.mvp.backend.experiment.application.service.ExperimentIncidentRecorder;
+import com.mvp.backend.experiment.domain.model.ExperimentCondition;
+import com.mvp.backend.experiment.domain.model.ExperimentRun;
+import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
 import com.mvp.backend.shared.dto.PagedResponse;
 import com.mvp.backend.shared.exception.AiServiceException;
 import com.mvp.backend.shared.exception.BusinessException;
@@ -32,6 +37,8 @@ import com.mvp.backend.student.domain.repository.StudentRepository;
 public class CorrectionService {
 
     private static final int MAX_SUGGESTIONS = 3;
+    static final String INCIDENT_AI_REQUEST_FAILED = "AI_REQUEST_FAILED";
+    static final String INCIDENT_MODEL_VERSION_CHANGED = "MODEL_VERSION_CHANGED";
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
 
@@ -39,6 +46,8 @@ public class CorrectionService {
     private final CorrectionSessionRepository sessionRepository;
     private final WordCorrectionRepository wordCorrectionRepository;
     private final AiCorrectionClient aiCorrectionClient;
+    private final ExperimentRunRepository runRepository;
+    private final ExperimentIncidentRecorder incidentRecorder;
     private final ObjectMapper objectMapper;
 
     public CorrectionService(
@@ -46,21 +55,29 @@ public class CorrectionService {
             CorrectionSessionRepository sessionRepository,
             WordCorrectionRepository wordCorrectionRepository,
             AiCorrectionClient aiCorrectionClient,
+            ExperimentRunRepository runRepository,
+            ExperimentIncidentRecorder incidentRecorder,
             ObjectMapper objectMapper) {
         this.studentRepository = studentRepository;
         this.sessionRepository = sessionRepository;
         this.wordCorrectionRepository = wordCorrectionRepository;
         this.aiCorrectionClient = aiCorrectionClient;
+        this.runRepository = runRepository;
+        this.incidentRecorder = incidentRecorder;
         this.objectMapper = objectMapper;
     }
 
     @Transactional
     public CorrectionSessionResponse process(UUID studentId, ProcessCorrectionRequest request) {
+        // La condicion se verifica antes de tocar la IA o persistir nada: en UNASSISTED el backend
+        // bloquea por su cuenta, independientemente de lo que haga el teclado.
+        var run = resolveRun(studentId, request.experimentRunId());
         var student = requireStudent(studentId);
-        var session = sessionRepository.save(new CorrectionSession(student, request.originalText()));
-        var aiResponse = aiCorrectionClient.correct(request.originalText(), studentId);
-        if (aiResponse == null) {
-            throw new AiServiceException("AI correction service returned an empty response", null);
+        var session = sessionRepository.save(new CorrectionSession(student, request.originalText(), run));
+        var aiResponse = requestCorrection(request.originalText(), studentId, run);
+        if (run != null && !run.recordModelVersion(aiResponse.modelVersion())) {
+            // La ejecucion ya fue atendida por otra version del modelo: se audita, no se oculta ni se rechaza.
+            run.recordIncident(INCIDENT_MODEL_VERSION_CHANGED);
         }
         List<String> suggestions = normalizeSuggestions(aiResponse.correctedText(), aiResponse.suggestions());
         // El detalle palabra por palabra ya no lo entrega la IA: se derivara por diff
@@ -73,12 +90,45 @@ public class CorrectionService {
         return toResponse(session, List.of());
     }
 
+    /** Ejecucion experimental del alumno, o null en uso normal. Solo ASSISTED y ACTIVE puede seguir. */
+    private ExperimentRun resolveRun(UUID studentId, UUID runId) {
+        if (runId == null) {
+            return null;
+        }
+        var run = runRepository.findByIdAndParticipantStudentId(runId, studentId)
+                .orElseThrow(() -> new NotFoundException("Experiment run not found"));
+        if (!run.isActive()) {
+            throw new BusinessException("Experiment run is not active");
+        }
+        if (run.getCondition() == ExperimentCondition.UNASSISTED) {
+            throw new BusinessException("Contextual correction is disabled for this experiment run");
+        }
+        return run;
+    }
+
+    private AiCorrectionResponse requestCorrection(String originalText, UUID studentId, ExperimentRun run) {
+        try {
+            var aiResponse = aiCorrectionClient.correct(originalText, studentId);
+            if (aiResponse == null) {
+                throw new AiServiceException("AI correction service returned an empty response", null);
+            }
+            return aiResponse;
+        } catch (AiServiceException exception) {
+            if (run != null) {
+                // Transaccion propia: la incidencia queda aunque esta correccion haga rollback.
+                incidentRecorder.record(run.getId(), INCIDENT_AI_REQUEST_FAILED);
+            }
+            throw exception;
+        }
+    }
+
     @Transactional
     public CorrectionSessionResponse registerFeedback(UUID studentId, UUID sessionId, CorrectionFeedbackRequest request) {
         requireStudent(studentId);
         var session = findOwnedSession(studentId, sessionId);
         String selectedSuggestion = validateSelectedSuggestion(session, request);
-        boolean accepted = request.acceptedCorrection();
+        // Deshacer una sugerencia aplicada equivale a rechazarla, envie lo que envie el flag.
+        boolean accepted = request.acceptedCorrection() && !request.isUndo();
         String finalText = emptyToNull(request.finalText());
         // Texto que el alumno realmente validó: su edición si la hay, si no la sugerencia base.
         String acceptedText = finalText != null ? finalText : selectedSuggestion;
@@ -88,9 +138,13 @@ public class CorrectionService {
         List<WordCorrection> wordCorrections = accepted && acceptedText != null
                 ? deriveWordCorrections(session, acceptedText)
                 : List.of();
-        session.registerFeedback(selectedSuggestion, finalText, accepted, wordCorrections.size());
+        session.registerFeedback(selectedSuggestion, finalText, accepted, wordCorrections.size(), request.normalizedReason());
         // Se reenvía a la IA el texto validado a mano (texto_final si existe) para su aprendizaje (best-effort).
-        aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), acceptedText, accepted);
+        // El feedback de una sesion experimental se guarda pero no se reenvia: el LoRA es global y las
+        // decisiones del experimento no deben alterar el comportamiento del modelo en caliente.
+        if (!session.isExperimental()) {
+            aiCorrectionClient.sendFeedback(studentId, session.getOriginalText(), acceptedText, accepted);
+        }
         return toResponse(session, wordCorrections);
     }
 

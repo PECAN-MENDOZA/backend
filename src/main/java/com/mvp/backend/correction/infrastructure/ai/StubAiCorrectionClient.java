@@ -28,6 +28,7 @@ public class StubAiCorrectionClient implements AiCorrectionClient {
     private static final Logger log = LoggerFactory.getLogger(StubAiCorrectionClient.class);
     private static final String SIMULATED_SUGGESTION = "(sugerencia simulada)";
     private static final long SIMULATED_PROCESSING_TIME_MS = 5;
+    private static final String SIMULATED_MODEL_VERSION = "stub";
 
     private final ObjectMapper objectMapper;
 
@@ -44,7 +45,8 @@ public class StubAiCorrectionClient implements AiCorrectionClient {
                 studentId,
                 originalText,
                 SIMULATED_PROCESSING_TIME_MS,
-                List.of(originalText, SIMULATED_SUGGESTION));
+                List.of(originalText, SIMULATED_SUGGESTION),
+                SIMULATED_MODEL_VERSION);
         logJson("<< correct response", response);
         return response;
     }

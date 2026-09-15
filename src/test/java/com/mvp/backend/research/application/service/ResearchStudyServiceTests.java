@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,7 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.TransactionDefinition;
 
 import com.mvp.backend.config.ResearchProperties;
 import com.mvp.backend.experiment.domain.model.ExperimentCondition;
@@ -39,12 +41,14 @@ import com.mvp.backend.experiment.domain.model.ExperimentRunStatus;
 import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
 import com.mvp.backend.research.application.dto.AccessCodeResponse;
 import com.mvp.backend.research.application.dto.CreateProtocolRequest;
+import com.mvp.backend.research.application.dto.CreateStudyRequest;
 import com.mvp.backend.research.application.dto.ExperimentRunResponse;
 import com.mvp.backend.research.application.dto.ParticipantResponse;
 import com.mvp.backend.research.application.dto.RunReasonRequest;
 import com.mvp.backend.research.application.dto.StudyProtocolResponse;
 import com.mvp.backend.research.domain.model.ParticipantSequence;
 import com.mvp.backend.research.domain.model.ProtocolStatus;
+import com.mvp.backend.research.domain.model.ProtocolTask;
 import com.mvp.backend.research.domain.model.ResearchAuditEvent;
 import com.mvp.backend.research.domain.model.ResearchStudy;
 import com.mvp.backend.research.domain.model.Researcher;
@@ -58,6 +62,7 @@ import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.research.domain.repository.StudyParticipantRepository;
 import com.mvp.backend.research.domain.repository.StudyProtocolRepository;
 import com.mvp.backend.shared.exception.BusinessException;
+import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.NotFoundException;
 
 @ExtendWith(MockitoExtension.class)
@@ -84,6 +89,9 @@ class ResearchStudyServiceTests {
     @Mock
     private ResearcherRepository researcherRepository;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     private ResearchStudyService service;
 
     private Researcher researcher;
@@ -100,7 +108,7 @@ class ResearchStudyServiceTests {
                 runRepository,
                 auditRepository,
                 researcherRepository,
-                new TransactionTemplate(mock(PlatformTransactionManager.class)),
+                transactionManager,
                 new ResearchProperties(TTL),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         researcher = new Researcher("lab@example.edu", "hash");
@@ -154,6 +162,60 @@ class ResearchStudyServiceTests {
                 .hasMessage("Study is not active");
     }
 
+    @Test
+    void expiredPendingCodeIsNotReportedAsOpen() {
+        StudyParticipant expired = new StudyParticipant(study, 1);
+        StudyParticipant redeemed = new StudyParticipant(study, 2);
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        protocol.activate();
+        ProtocolTask taskA = protocol.findTask(TaskVariant.TASK_A).orElseThrow();
+        ExperimentRun staleNeverRedeemed = new ExperimentRun(expired, protocol, taskA,
+                expired.nextCondition(0), "a".repeat(64), NOW.minusSeconds(1), NOW.minus(TTL));
+        ExperimentRun staleButRedeemed = new ExperimentRun(redeemed, protocol, taskA,
+                redeemed.nextCondition(0), "c".repeat(64), NOW.minusSeconds(1), NOW.minus(TTL));
+        staleButRedeemed.redeem(NOW.minus(TTL));
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(participantRepository.findByStudyIdOrderByPseudonymAsc(studyId)).thenReturn(List.of(expired, redeemed));
+        when(runRepository.findByParticipantIdOrderByCreatedAtAsc(expired.getId())).thenReturn(List.of(staleNeverRedeemed));
+        when(runRepository.findByParticipantIdOrderByCreatedAtAsc(redeemed.getId())).thenReturn(List.of(staleButRedeemed));
+
+        List<ParticipantResponse> participants = service.listParticipants(researcherId, studyId);
+
+        assertThat(participants).extracting(ParticipantResponse::pseudonym).containsExactly("P-001", "P-002");
+        assertThat(participants.get(0).hasOpenRun()).as("expired, never redeemed").isFalse();
+        assertThat(participants.get(1).hasOpenRun()).as("expired but redeemed").isTrue();
+        assertThat(participants.get(0).completedRuns()).isZero();
+        assertThat(participants.get(0).nextSession().task()).isEqualTo(TaskVariant.TASK_A);
+    }
+
+    // ---------------------------------------------------------------- studies
+
+    @Test
+    void duplicateStudyCodeRaceIsAConflict() {
+        when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
+        when(studyRepository.existsByCode("EXP-09")).thenReturn(false);
+        when(studyRepository.saveAndFlush(any(ResearchStudy.class))).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement",
+                new ConstraintViolationException("could not execute statement", new SQLException("duplicate key"),
+                        "research_studies_code_key")));
+
+        assertThatThrownBy(() -> service.createStudy(researcherId, new CreateStudyRequest("EXP-09", "Duplicado")))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Study code already exists");
+        verify(auditRepository, never()).save(any());
+    }
+
+    @Test
+    void unrecognisedIntegrityViolationOnStudyCreationIsRethrown() {
+        when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
+        when(studyRepository.existsByCode("EXP-10")).thenReturn(false);
+        DataIntegrityViolationException other = new DataIntegrityViolationException("null value in column title");
+        when(studyRepository.saveAndFlush(any(ResearchStudy.class))).thenThrow(other);
+
+        assertThatThrownBy(() -> service.createStudy(researcherId, new CreateStudyRequest("EXP-10", "Otro")))
+                .isSameAs(other);
+    }
+
     // ---------------------------------------------------------------- protocols
 
     @Test
@@ -181,24 +243,47 @@ class ResearchStudyServiceTests {
         previous.activate();
         StudyProtocol next = protocolWithTasks(draftStudy, 2);
 
-        when(studyRepository.findByIdAndCreatedById(draftStudy.getId(), researcherId)).thenReturn(Optional.of(draftStudy));
+        when(studyRepository.findOwnedForUpdate(draftStudy.getId(), researcherId)).thenReturn(Optional.of(draftStudy));
         when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
         when(protocolRepository.findByIdAndStudyId(next.getId(), draftStudy.getId())).thenReturn(Optional.of(next));
         when(protocolRepository.findFirstByStudyIdAndStatus(draftStudy.getId(), ProtocolStatus.ACTIVE))
                 .thenReturn(Optional.of(previous));
+        // El retiro se vacia a la BD antes de activar la nueva version: nunca hay dos ACTIVE a la vez.
+        when(protocolRepository.saveAndFlush(previous)).thenAnswer(inv -> {
+            assertThat(previous.getStatus()).isEqualTo(ProtocolStatus.RETIRED);
+            assertThat(next.getStatus()).isEqualTo(ProtocolStatus.DRAFT);
+            return previous;
+        });
 
         StudyProtocolResponse response = service.activateProtocol(researcherId, draftStudy.getId(), next.getId());
 
         assertThat(response.status()).isEqualTo(ProtocolStatus.ACTIVE);
         assertThat(previous.getStatus()).isEqualTo(ProtocolStatus.RETIRED);
+        assertThat(next.getStatus()).isEqualTo(ProtocolStatus.ACTIVE);
         assertThat(draftStudy.getStatus()).isEqualTo(StudyStatus.ACTIVE);
+        verify(protocolRepository).saveAndFlush(previous);
+    }
+
+    @Test
+    void activateProtocolLocksTheStudy() {
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(researcherRepository.findById(researcherId)).thenReturn(Optional.of(researcher));
+        when(protocolRepository.findByIdAndStudyId(protocol.getId(), studyId)).thenReturn(Optional.of(protocol));
+        when(protocolRepository.findFirstByStudyIdAndStatus(studyId, ProtocolStatus.ACTIVE)).thenReturn(Optional.empty());
+
+        service.activateProtocol(researcherId, studyId, protocol.getId());
+
+        verify(studyRepository).findOwnedForUpdate(studyId, researcherId);
+        verify(studyRepository, never()).findByIdAndCreatedById(any(), any());
+        assertThat(protocol.getStatus()).isEqualTo(ProtocolStatus.ACTIVE);
     }
 
     @Test
     void closedStudyRejectsProtocolActivation() {
         study.close();
         StudyProtocol protocol = protocolWithTasks(study, 1);
-        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(studyRepository.findOwnedForUpdate(studyId, researcherId)).thenReturn(Optional.of(study));
         when(protocolRepository.findByIdAndStudyId(protocol.getId(), studyId)).thenReturn(Optional.of(protocol));
 
         assertThatThrownBy(() -> service.activateProtocol(researcherId, studyId, protocol.getId()))
@@ -343,6 +428,59 @@ class ResearchStudyServiceTests {
     }
 
     @Test
+    void hashCollisionIsDetectedByHibernateConstraintName() throws Exception {
+        StudyParticipant participant = new StudyParticipant(study, 1);
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        protocol.activate();
+        stubCodeGeneration(participant, protocol, 0);
+        stubAuditResearcher();
+        // Ni el mensaje ni la causa raiz nombran la restriccion: solo el nombre que expone Hibernate.
+        DataIntegrityViolationException collision = new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("could not execute statement", new SQLException("duplicate key"),
+                        "UK_RUNS_ACCESS_CODE_HASH"));
+        when(runRepository.saveAndFlush(any(ExperimentRun.class)))
+                .thenThrow(collision)
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        AccessCodeResponse response = service.generateAccessCode(researcherId, studyId, participant.getId());
+
+        ArgumentCaptor<ExperimentRun> runCaptor = ArgumentCaptor.forClass(ExperimentRun.class);
+        verify(runRepository, times(2)).saveAndFlush(runCaptor.capture());
+        assertThat(runCaptor.getAllValues().get(1).getAccessCodeHash()).isEqualTo(sha256Hex(response.code()));
+        verify(auditRepository, times(1)).save(any(ResearchAuditEvent.class));
+    }
+
+    @Test
+    void unrecognisedIntegrityViolationIsRethrownWhenIssuingACode() {
+        StudyParticipant participant = new StudyParticipant(study, 1);
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        protocol.activate();
+        stubCodeGeneration(participant, protocol, 0);
+        DataIntegrityViolationException other = new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("could not execute statement", new SQLException("fk"), "fk_runs_task"));
+        when(runRepository.saveAndFlush(any(ExperimentRun.class))).thenThrow(other);
+
+        assertThatThrownBy(() -> service.generateAccessCode(researcherId, studyId, participant.getId()))
+                .isSameAs(other);
+        verify(runRepository, times(1)).saveAndFlush(any());
+    }
+
+    @Test
+    void eachCodeAttemptRunsInANewTransaction() {
+        StudyParticipant participant = new StudyParticipant(study, 1);
+        StudyProtocol protocol = protocolWithTasks(study, 1);
+        protocol.activate();
+        stubCodeGeneration(participant, protocol, 0);
+        stubAuditResearcher();
+        when(runRepository.saveAndFlush(any(ExperimentRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.generateAccessCode(researcherId, studyId, participant.getId());
+
+        verify(transactionManager).getTransaction(argThat(definition ->
+                definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_REQUIRES_NEW));
+    }
+
+    @Test
     void openRunRaceIsReportedAsBusinessError() {
         StudyParticipant participant = new StudyParticipant(study, 1);
         StudyProtocol protocol = protocolWithTasks(study, 1);
@@ -430,6 +568,24 @@ class ResearchStudyServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Only pending or active runs can be cancelled");
         assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
+    }
+
+    @Test
+    void cancellingACancelledRunIsRejectedAndNotAudited() {
+        ExperimentRun run = pendingRun(1);
+        run.cancel("Motivo original de la cancelacion", NOW.minusSeconds(60));
+        when(studyRepository.findByIdAndCreatedById(studyId, researcherId)).thenReturn(Optional.of(study));
+        when(runRepository.findByIdAndParticipantStudyId(run.getId(), studyId)).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.cancelRun(
+                researcherId, studyId, run.getId(), new RunReasonRequest("Un motivo distinto y posterior")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only pending or active runs can be cancelled");
+
+        assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.CANCELLED);
+        assertThat(run.getFailureReason()).isEqualTo("Motivo original de la cancelacion");
+        assertThat(run.getCompletedAt()).isEqualTo(NOW.minusSeconds(60));
+        verify(auditRepository, never()).save(any());
     }
 
     @Test

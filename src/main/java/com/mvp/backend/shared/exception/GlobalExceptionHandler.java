@@ -5,7 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -26,15 +25,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, exception.getMessage(), request, Map.of());
     }
 
+    // Unico mapeo a 409. No existe un handler generico de DataIntegrityViolationException a proposito:
+    // cada servicio traduce solo las restricciones que reconoce (p. ej. el codigo de estudio duplicado)
+    // a ConflictException; cualquier otra violacion de integridad es un bug y debe seguir siendo 500.
     @ExceptionHandler(ConflictException.class)
     ResponseEntity<ApiError> handleConflict(ConflictException exception, HttpServletRequest request) {
         return error(HttpStatus.CONFLICT, exception.getMessage(), request, Map.of());
-    }
-
-    // Restricciones unicas no cubiertas por una validacion previa (p. ej. completion_key repetida).
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException exception, HttpServletRequest request) {
-        return error(HttpStatus.CONFLICT, "Request conflicts with existing data", request, Map.of());
     }
 
     @ExceptionHandler(UnauthorizedException.class)

@@ -8,8 +8,11 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -58,6 +61,10 @@ public class ResearchStudyService {
             List.of(ExperimentRunStatus.PENDING, ExperimentRunStatus.ACTIVE);
     private static final int MAX_CODE_ATTEMPTS = 3;
     private static final String REVOKED_REASON = "Access code revoked by the researcher";
+    private static final String ACCESS_CODE_HASH_CONSTRAINT = "uk_runs_access_code_hash";
+    private static final String ONE_OPEN_RUN_CONSTRAINT = "uk_runs_one_open_per_participant";
+    /** V8 declara {@code code ... UNIQUE} sin nombre; PostgreSQL lo bautiza {@code <tabla>_code_key}. */
+    private static final String STUDY_CODE_CONSTRAINT = "research_studies_code_key";
 
     private final ResearchStudyRepository studyRepository;
     private final StudyProtocolRepository protocolRepository;
@@ -77,7 +84,7 @@ public class ResearchStudyService {
             ExperimentRunRepository runRepository,
             ResearchAuditEventRepository auditRepository,
             ResearcherRepository researcherRepository,
-            TransactionTemplate transactionTemplate,
+            PlatformTransactionManager transactionManager,
             ResearchProperties properties,
             Clock clock) {
         this.studyRepository = studyRepository;
@@ -86,7 +93,9 @@ public class ResearchStudyService {
         this.runRepository = runRepository;
         this.auditRepository = auditRepository;
         this.researcherRepository = researcherRepository;
-        this.transactionTemplate = transactionTemplate;
+        // Cada intento de emision debe correr en una transaccion propia (ver generateAccessCode).
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.properties = properties;
         this.clock = clock;
     }
@@ -107,7 +116,16 @@ public class ResearchStudyService {
         if (studyRepository.existsByCode(code)) {
             throw new ConflictException("Study code already exists");
         }
-        ResearchStudy study = studyRepository.save(new ResearchStudy(code, request.title().strip(), researcher));
+        ResearchStudy study;
+        try {
+            study = studyRepository.saveAndFlush(new ResearchStudy(code, request.title().strip(), researcher));
+        } catch (DataIntegrityViolationException e) {
+            // Carrera entre el existsByCode y el INSERT: solo esta restriccion se traduce a 409.
+            if (violates(e, STUDY_CODE_CONSTRAINT)) {
+                throw new ConflictException("Study code already exists");
+            }
+            throw e;
+        }
         audit(researcher, study, "STUDY_CREATED", study.getId(), "code=" + code);
         return toStudyResponse(study);
     }
@@ -131,9 +149,14 @@ public class ResearchStudyService {
         return StudyProtocolResponse.from(saved);
     }
 
+    /**
+     * Bloquea el estudio (PESSIMISTIC_WRITE) para serializar activaciones concurrentes: el retiro
+     * de la version vigente se vacia a la BD antes de activar la nueva, asi nunca coexisten dos ACTIVE.
+     */
     @Transactional
     public StudyProtocolResponse activateProtocol(UUID researcherId, UUID studyId, UUID protocolId) {
-        ResearchStudy study = requireOwnedStudy(researcherId, studyId);
+        ResearchStudy study = studyRepository.findOwnedForUpdate(studyId, researcherId)
+                .orElseThrow(() -> new NotFoundException("Study not found"));
         StudyProtocol protocol = protocolRepository.findByIdAndStudyId(protocolId, studyId)
                 .orElseThrow(() -> new NotFoundException("Protocol not found"));
         requireNotClosed(study);
@@ -150,7 +173,10 @@ public class ResearchStudyService {
         }
         protocolRepository.findFirstByStudyIdAndStatus(studyId, ProtocolStatus.ACTIVE)
                 .filter(active -> !active.getId().equals(protocol.getId()))
-                .ifPresent(active -> domain(active::retire));
+                .ifPresent(active -> {
+                    domain(active::retire);
+                    protocolRepository.saveAndFlush(active);
+                });
         domain(protocol::activate);
         if (study.getStatus() == StudyStatus.DRAFT) {
             study.activate();
@@ -206,11 +232,10 @@ public class ResearchStudyService {
             try {
                 return transactionTemplate.execute(status -> issueAccessCode(researcherId, studyId, participantId));
             } catch (DataIntegrityViolationException e) {
-                String cause = String.valueOf(e.getMostSpecificCause().getMessage()).toLowerCase(Locale.ROOT);
-                if (cause.contains("uk_runs_one_open_per_participant")) {
+                if (violates(e, ONE_OPEN_RUN_CONSTRAINT)) {
                     throw new BusinessException("Participant already has an open run");
                 }
-                if (!cause.contains("uk_runs_access_code_hash")) {
+                if (!violates(e, ACCESS_CODE_HASH_CONSTRAINT)) {
                     throw e;
                 }
                 // Colision de hash (probabilidad ~2^-256): se regenera el codigo en una transaccion nueva.
@@ -295,6 +320,11 @@ public class ResearchStudyService {
     public ExperimentRunResponse cancelRun(UUID researcherId, UUID studyId, UUID runId, RunReasonRequest request) {
         ResearchStudy study = requireOwnedStudy(researcherId, studyId);
         ExperimentRun run = requireRun(studyId, runId);
+        // run.cancel es idempotente sobre CANCELLED; aqui una segunda cancelacion no debe
+        // aceptar otro motivo ni generar un nuevo evento de auditoria.
+        if (!OPEN_STATUSES.contains(run.getStatus())) {
+            throw new BusinessException("Only pending or active runs can be cancelled");
+        }
         domain(() -> run.cancel(request.reason(), clock.instant()));
         audit(requireResearcher(researcherId), study, "RUN_CANCELLED", run.getId(), null);
         return ExperimentRunResponse.from(run);
@@ -322,8 +352,10 @@ public class ResearchStudyService {
     }
 
     private ParticipantResponse toParticipantResponse(StudyParticipant participant) {
-        long completed = runRepository.countByParticipantIdAndStatus(participant.getId(), ExperimentRunStatus.COMPLETED);
-        boolean open = runRepository.existsByParticipantIdAndStatusIn(participant.getId(), OPEN_STATUSES);
+        List<ExperimentRun> runs = runRepository.findByParticipantIdOrderByCreatedAtAsc(participant.getId());
+        Instant now = clock.instant();
+        long completed = runs.stream().filter(run -> run.getStatus() == ExperimentRunStatus.COMPLETED).count();
+        boolean open = runs.stream().anyMatch(run -> isOpen(run, now));
         return new ParticipantResponse(
                 participant.getId(),
                 participant.getPseudonym(),
@@ -333,6 +365,33 @@ public class ResearchStudyService {
                 open,
                 nextSession(participant, completed).orElse(null),
                 participant.getCreatedAt());
+    }
+
+    /**
+     * ACTIVE siempre cuenta; PENDING solo si el codigo fue canjeado o aun no vencio. Un codigo
+     * vencido y nunca canjeado no bloquea al participante (se marca EXPIRED al emitir el siguiente).
+     */
+    private static boolean isOpen(ExperimentRun run, Instant now) {
+        return switch (run.getStatus()) {
+            case ACTIVE -> true;
+            case PENDING -> run.getRedeemedAt() != null || run.getAccessCodeExpiresAt().isAfter(now);
+            default -> false;
+        };
+    }
+
+    /**
+     * Detecta la restriccion violada: primero por el nombre que expone Hibernate
+     * ({@link ConstraintViolationException#getConstraintName()}, sin distinguir mayusculas) y, si el
+     * driver no lo informa (o lo decora), por el texto de la causa mas especifica.
+     */
+    private static boolean violates(DataIntegrityViolationException e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConstraintViolationException cve && constraint.equalsIgnoreCase(cve.getConstraintName())) {
+                return true;
+            }
+        }
+        String message = String.valueOf(e.getMostSpecificCause().getMessage()).toLowerCase(Locale.ROOT);
+        return message.contains(constraint);
     }
 
     private ResearchStudyResponse toStudyResponse(ResearchStudy study) {

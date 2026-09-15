@@ -73,6 +73,11 @@ public class ResearchStudyController {
         return service.activateProtocol(researcherId(jwt), studyId, protocolId);
     }
 
+    @GetMapping("/{studyId}/protocols")
+    public List<StudyProtocolResponse> listProtocols(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID studyId) {
+        return service.listProtocols(researcherId(jwt), studyId);
+    }
+
     @GetMapping("/{studyId}/participants")
     public List<ParticipantResponse> listParticipants(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID studyId) {
         return service.listParticipants(researcherId(jwt), studyId);

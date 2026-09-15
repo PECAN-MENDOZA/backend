@@ -1,5 +1,6 @@
 package com.mvp.backend.research.domain.repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -15,4 +16,6 @@ public interface StudyProtocolRepository extends JpaRepository<StudyProtocol, UU
     Optional<StudyProtocol> findFirstByStudyIdAndStatus(UUID studyId, ProtocolStatus status);
 
     Optional<StudyProtocol> findFirstByStudyIdOrderByVersionDesc(UUID studyId);
+
+    List<StudyProtocol> findByStudyIdOrderByVersionDesc(UUID studyId);
 }

@@ -59,6 +59,8 @@ POST /api/v1/research/studies/{studyId}/protocols
 POST /api/v1/research/studies/{studyId}/protocols/{protocolId}/activate
 → 200 {…,"status":"ACTIVE"}
 
+GET /api/v1/research/studies/{studyId}/protocols → 200 [StudyProtocolResponse] (versión más reciente primero)
+
 POST /api/v1/research/studies/{studyId}/close
 → 200 {…,"status":"CLOSED"}   (sin cuerpo en la petición; 400 "Study is already closed" | "Only an active study can be closed")
 ```

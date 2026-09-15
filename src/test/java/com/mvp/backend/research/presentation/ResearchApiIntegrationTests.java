@@ -140,6 +140,7 @@ class ResearchApiIntegrationTests {
     void wholeResearchFlowIsAuthorizedPseudonymousAndCompatible() throws Exception {
         loginsAndRoleBoundaries();
         studyProtocolAndParticipants();
+        protocolVersionHistoryIsListedNewestFirst();
         // Sessions in the order a pilot would run them; the server fixes prompt, condition and order.
         session(participant1, student1, "P-001", "TASK_A", "ASSISTED", P1_ASSISTED_TEXT, 120_000);
         session(participant2, student2, "P-002", "TASK_A", "UNASSISTED", P2_UNASSISTED_TEXT, 120_000);
@@ -276,6 +277,52 @@ class ResearchApiIntegrationTests {
         assertThat(participants.toString()).doesNotContain("studentId", "email", "notes", "institution", "name");
         assertThat(participants.get(0).propertyNames()).containsExactlyInAnyOrder(
                 "id", "pseudonym", "sequence", "completedRuns", "protocolCompleted", "hasOpenRun", "nextSession", "createdAt");
+    }
+
+    // ----------------------------------------------------------------- step 2b
+
+    /**
+     * Segundo estudio, solo para ejercitar {@code GET …/protocols}: dos versiones y se activa la
+     * segunda, de modo que la version mas reciente queda primero y la anterior en RETIRED, sin tocar
+     * el protocolo (version 1) que el resto del flujo asume activo en {@link #studyId}.
+     */
+    private void protocolVersionHistoryIsListedNewestFirst() throws Exception {
+        JsonNode study2 = research("create study 2", researcher(post(RESEARCH + "/studies"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(obj("code", "EXP2-" + suffix, "title", "Piloto de control")), 201);
+        UUID study2Id = UUID.fromString(study2.get("id").asText());
+        String study2Url = RESEARCH + "/studies/" + study2Id;
+
+        JsonNode v1 = research("create protocol v1", researcher(post(study2Url + "/protocols"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(obj("taskAPrompt", "Consigna A v1", "taskBPrompt", "Consigna B v1")), 201);
+        UUID v1Id = UUID.fromString(v1.get("id").asText());
+        research("activate protocol v1", researcher(post(study2Url + "/protocols/" + v1Id + "/activate")), 200);
+
+        JsonNode v2 = research("create protocol v2", researcher(post(study2Url + "/protocols"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(obj("taskAPrompt", "Consigna A v2", "taskBPrompt", "Consigna B v2")), 201);
+        UUID v2Id = UUID.fromString(v2.get("id").asText());
+        research("activate protocol v2", researcher(post(study2Url + "/protocols/" + v2Id + "/activate")), 200);
+
+        JsonNode protocols = research("list protocol versions", researcher(get(study2Url + "/protocols")), 200);
+        assertThat(protocols).hasSize(2);
+        assertThat(protocols.get(0).get("id").asText()).isEqualTo(v2Id.toString());
+        assertThat(protocols.get(0).get("version").asInt()).isEqualTo(2);
+        assertThat(protocols.get(0).get("status").asText()).isEqualTo("ACTIVE");
+        assertThat(protocols.get(0).get("taskAPrompt").asText()).isEqualTo("Consigna A v2");
+        assertThat(protocols.get(0).get("taskBPrompt").asText()).isEqualTo("Consigna B v2");
+        assertThat(protocols.get(1).get("id").asText()).isEqualTo(v1Id.toString());
+        assertThat(protocols.get(1).get("version").asInt()).isEqualTo(1);
+        assertThat(protocols.get(1).get("status").asText()).isEqualTo("RETIRED");
+
+        // Un estudio ajeno o inexistente responde igual que las demas lecturas: 404, no una pista de enumeracion.
+        mockMvc.perform(researcher(get(RESEARCH + "/studies/" + UUID.randomUUID() + "/protocols")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Study not found"));
+
+        // Un token de docente no es investigador: la seguridad de metodo bloquea antes de mirar el dueño.
+        mockMvc.perform(bearer(teacherToken, get(study2Url + "/protocols"))).andExpect(status().isForbidden());
     }
 
     // ------------------------------------------------------------------ step 3

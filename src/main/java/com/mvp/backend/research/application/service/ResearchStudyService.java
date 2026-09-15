@@ -214,6 +214,15 @@ public class ResearchStudyService {
         return StudyProtocolResponse.from(protocol);
     }
 
+    /** Historial de versiones, mas reciente primero (spec panel investigador: prompts activos y de baja). */
+    @Transactional(readOnly = true)
+    public List<StudyProtocolResponse> listProtocols(UUID researcherId, UUID studyId) {
+        requireOwnedStudy(researcherId, studyId);
+        return protocolRepository.findByStudyIdOrderByVersionDesc(studyId).stream()
+                .map(StudyProtocolResponse::from)
+                .toList();
+    }
+
     // ------------------------------------------------------------- participants
 
     @Transactional(readOnly = true)

@@ -3,7 +3,10 @@ package com.mvp.backend.experiment.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atMost;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +18,10 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +59,7 @@ class StudentExperimentServiceTests {
     private static final Duration TTL = Duration.ofMinutes(30);
     private static final String CODE = "ABCD2345";
     private static final String INVALID = "Access code is invalid or unavailable";
+    private static final String TOO_MANY = "Too many failed redemption attempts, try again later";
 
     @Mock
     private ExperimentRunRepository runRepository;
@@ -85,6 +93,9 @@ class StudentExperimentServiceTests {
         otherStudent = new Student("alumno2", "Colegio", "hash");
         firstStudentId = student.getId();
         secondStudentId = otherStudent.getId();
+        // Every redemption resolves the authenticated student before touching the code.
+        lenient().when(studentRepository.findById(firstStudentId)).thenReturn(Optional.of(student));
+        lenient().when(studentRepository.findById(secondStudentId)).thenReturn(Optional.of(otherStudent));
     }
 
     // ------------------------------------------------------------------ redeem
@@ -92,7 +103,7 @@ class StudentExperimentServiceTests {
     @Test
     void firstRedemptionBindsParticipantAndSecondStudentIsRejected() {
         var run = pendingRun();
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
         when(studentRepository.findById(firstStudentId)).thenReturn(Optional.of(student));
         when(participantRepository.findByStudyIdAndStudentId(study.getId(), firstStudentId)).thenReturn(Optional.empty());
@@ -117,7 +128,7 @@ class StudentExperimentServiceTests {
     void sameStudentCanRedeemAgainBeforeStarting() {
         var run = pendingRun();
         run.getParticipant().linkStudent(student);
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
 
         var first = service.redeem(firstStudentId, new RedeemAccessCodeRequest(" abcd2345 "));
@@ -126,12 +137,12 @@ class StudentExperimentServiceTests {
         assertThat(second.id()).isEqualTo(first.id()).isEqualTo(run.getId());
         assertThat(run.getRedeemedAt()).isEqualTo(NOW);
         assertThat(run.getAccessCodeHash()).isEqualTo(AccessCode.hash(CODE));
-        verify(studentRepository, never()).findById(any());
+        verify(participantRepository, never()).findByStudyIdAndStudentId(any(), any());
     }
 
     @Test
     void unknownCodeIsRejectedWithTheGenericMessage() {
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.redeem(firstStudentId, new RedeemAccessCodeRequest(CODE)))
@@ -144,7 +155,7 @@ class StudentExperimentServiceTests {
         var run = new ExperimentRun(new StudyParticipant(study, 1), protocol,
                 protocol.findTask(TaskVariant.TASK_A).orElseThrow(), ExperimentCondition.ASSISTED,
                 AccessCode.hash(CODE), NOW.minusSeconds(1), NOW.minus(TTL));
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.redeem(firstStudentId, new RedeemAccessCodeRequest(CODE)))
@@ -154,13 +165,13 @@ class StudentExperimentServiceTests {
         assertThat(run.getStatus()).isEqualTo(ExperimentRunStatus.EXPIRED);
         assertThat(run.getAccessCodeHash()).isNull();
         verify(runRepository).save(run);
-        verify(studentRepository, never()).findById(any());
+        verify(participantRepository, never()).findByStudyIdAndStudentId(any(), any());
     }
 
     @Test
     void studentAlreadyBoundToAnotherParticipantOfTheStudyIsRejected() {
         var run = pendingRun();
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
         when(studentRepository.findById(firstStudentId)).thenReturn(Optional.of(student));
         when(participantRepository.findByStudyIdAndStudentId(study.getId(), firstStudentId))
@@ -175,7 +186,7 @@ class StudentExperimentServiceTests {
 
     @Test
     void sixthFailedRedemptionInFiveMinutesIsRateLimitedPerStudent() {
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.empty());
         for (int i = 0; i < 5; i++) {
             assertThatThrownBy(() -> service.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
@@ -192,16 +203,16 @@ class StudentExperimentServiceTests {
         // A valid code is not even looked up while the student is blocked.
         assertThatThrownBy(() -> service.redeem(firstStudentId, new RedeemAccessCodeRequest(CODE)))
                 .hasMessage("Too many failed redemption attempts, try again later");
-        verify(runRepository, never()).findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING);
+        verify(runRepository, never()).findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING);
     }
 
     @Test
     void successfulRedemptionClearsTheFailedAttempts() {
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.empty());
         var run = pendingRun();
         run.getParticipant().linkStudent(student);
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
         for (int i = 0; i < 4; i++) {
             assertThatThrownBy(() -> service.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
@@ -222,7 +233,7 @@ class StudentExperimentServiceTests {
     void rateLimitWindowExpiresAfterFiveMinutes() {
         var ticking = new MutableClock(NOW);
         var timed = new StudentExperimentService(runRepository, participantRepository, studentRepository, ticking, "b");
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.empty());
         for (int i = 0; i < 5; i++) {
             assertThatThrownBy(() -> timed.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
@@ -236,12 +247,88 @@ class StudentExperimentServiceTests {
                 .hasMessage(INVALID);
     }
 
+    @Test
+    void missingStudentAccountIsRejectedGenericallyBeforeLookingUpTheCode() {
+        UUID deletedAccount = UUID.randomUUID();
+        when(studentRepository.findById(deletedAccount)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.redeem(deletedAccount, new RedeemAccessCodeRequest(CODE)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(INVALID);
+
+        // No code oracle for a deleted account, and the attempt counts as a failure.
+        verify(runRepository, never()).findByAccessCodeHashAndStatusForUpdate(any(), any());
+        assertThat(service.trackedStudents()).isEqualTo(1);
+    }
+
+    @Test
+    void parallelFailuresCannotExceedTheLimit() throws Exception {
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
+                .thenReturn(Optional.empty());
+        int threads = 10;
+        var ready = new CountDownLatch(threads);
+        var go = new CountDownLatch(1);
+        var outcomes = new ConcurrentLinkedQueue<String>();
+        var pool = Executors.newFixedThreadPool(threads);
+        try {
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    ready.countDown();
+                    go.await();
+                    try {
+                        service.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999"));
+                        outcomes.add("redeemed");
+                    } catch (BusinessException e) {
+                        outcomes.add(e.getMessage());
+                    }
+                    return null;
+                });
+            }
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(outcomes).hasSize(threads);
+        assertThat(outcomes.stream().filter(INVALID::equals).count()).isEqualTo(5);
+        assertThat(outcomes.stream().filter(TOO_MANY::equals).count()).isEqualTo(5);
+        verify(runRepository, atMost(5))
+                .findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING);
+    }
+
+    @Test
+    void expiredWindowsAreEvicted() {
+        var ticking = new MutableClock(NOW);
+        var timed = new StudentExperimentService(runRepository, participantRepository, studentRepository, ticking, "b");
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING))
+                .thenReturn(Optional.empty());
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> timed.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
+                    .hasMessage(INVALID);
+        }
+        assertThatThrownBy(() -> timed.redeem(secondStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
+                .hasMessage(INVALID);
+        assertThat(timed.trackedStudents()).isEqualTo(2);
+
+        ticking.now = NOW.plus(Duration.ofMinutes(6));
+        assertThatThrownBy(() -> timed.redeem(firstStudentId, new RedeemAccessCodeRequest("ZZZZ9999")))
+                .hasMessage(INVALID);
+
+        // The lookup happened (the window was reset) and both stale windows were evicted first.
+        verify(runRepository, times(7))
+                .findByAccessCodeHashAndStatusForUpdate(AccessCode.hash("ZZZZ9999"), ExperimentRunStatus.PENDING);
+        assertThat(timed.trackedStudents()).isEqualTo(1);
+    }
+
     // ------------------------------------------------------------------- start
 
     @Test
     void startActivatesRunRecordsBackendVersionAndIsIdempotent() {
         var run = redeemedRun();
-        when(runRepository.findByIdAndParticipantStudentId(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
 
         ExperimentRunResponse started = service.start(firstStudentId, run.getId());
         ExperimentRunResponse again = service.start(firstStudentId, run.getId());
@@ -256,14 +343,14 @@ class StudentExperimentServiceTests {
     @Test
     void startRequiresARedeemedRunOwnedByTheStudent() {
         var notRedeemed = pendingRun();
-        when(runRepository.findByIdAndParticipantStudentId(notRedeemed.getId(), firstStudentId))
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(notRedeemed.getId(), firstStudentId))
                 .thenReturn(Optional.of(notRedeemed));
         assertThatThrownBy(() -> service.start(firstStudentId, notRedeemed.getId()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Run is not ready to start");
 
         UUID foreign = UUID.randomUUID();
-        when(runRepository.findByIdAndParticipantStudentId(foreign, firstStudentId)).thenReturn(Optional.empty());
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(foreign, firstStudentId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.start(firstStudentId, foreign))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessage("Run not found");
@@ -287,7 +374,7 @@ class StudentExperimentServiceTests {
     void activeRestoresARedeemedButNotStartedRun() {
         var run = pendingRun();
         run.getParticipant().linkStudent(student);
-        when(runRepository.findByAccessCodeHashAndStatus(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
+        when(runRepository.findByAccessCodeHashAndStatusForUpdate(AccessCode.hash(CODE), ExperimentRunStatus.PENDING))
                 .thenReturn(Optional.of(run));
         when(runRepository.findRestorableByStudentId(student.getId()))
                 .thenAnswer(inv -> run.isRedeemedPending() ? List.of(run) : List.of());
@@ -313,7 +400,7 @@ class StudentExperimentServiceTests {
     @Test
     void completeStoresTextDurationAppVersionAndIsIdempotentByKey() {
         var run = activeRunStartedAt(NOW.minusSeconds(120));
-        when(runRepository.findByIdAndParticipantStudentId(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
         UUID key = UUID.randomUUID();
         var request = new CompleteExperimentRequest("Texto final", 100_000L, key, "1.4.2");
 
@@ -358,7 +445,7 @@ class StudentExperimentServiceTests {
     @Test
     void completeRequiresAnActiveRun() {
         var run = redeemedRun();
-        when(runRepository.findByIdAndParticipantStudentId(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(run.getId(), firstStudentId)).thenReturn(Optional.of(run));
 
         assertThatThrownBy(() -> service.complete(firstStudentId, run.getId(),
                 new CompleteExperimentRequest("Texto", 1_000L, UUID.randomUUID(), "debug")))
@@ -464,7 +551,7 @@ class StudentExperimentServiceTests {
     /** ACTIVE run owned by {@code student}, already reachable through the repository. */
     private ExperimentRun activeRunStartedAt(Instant startedAt) {
         var run = startedRun(startedAt);
-        when(runRepository.findByIdAndParticipantStudentId(run.getId(), student.getId())).thenReturn(Optional.of(run));
+        when(runRepository.findByIdAndParticipantStudentIdForUpdate(run.getId(), student.getId())).thenReturn(Optional.of(run));
         return run;
     }
 

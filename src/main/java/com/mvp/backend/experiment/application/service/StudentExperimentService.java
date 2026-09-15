@@ -44,8 +44,8 @@ public class StudentExperimentService {
     static final String COMPLETION_KEY_CONSTRAINT = "uk_runs_completion_key";
 
     private static final long DURATION_TOLERANCE_MS = 300_000L;
-    private static final int MAX_FAILED_REDEMPTIONS = 5;
-    private static final Duration FAILURE_WINDOW = Duration.ofMinutes(5);
+    private static final int MAX_FAILURES = 5;
+    private static final Duration WINDOW = Duration.ofMinutes(5);
 
     private final ExperimentRunRepository runRepository;
     private final StudyParticipantRepository participantRepository;
@@ -56,7 +56,7 @@ public class StudentExperimentService {
     // ponytail: limite por proceso, suficiente para el piloto con una sola instancia del backend
     // (cada alumno: <=5 canjes fallidos cada 5 min). Antes de habilitar varias instancias debe
     // pasar a almacenamiento compartido (BD o cache), porque cada JVM tendria su propio contador.
-    private final ConcurrentHashMap<UUID, AttemptWindow> failedRedemptions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, AttemptWindow> attempts = new ConcurrentHashMap<>();
 
     public StudentExperimentService(
             ExperimentRunRepository runRepository,
@@ -73,30 +73,38 @@ public class StudentExperimentService {
 
     /**
      * Canjea el codigo: vincula al alumno con el participante en el primer canje y rechaza a
-     * cualquier otro alumno despues. Todo fallo (codigo desconocido, vencido, revocado, de otro
-     * alumno) responde el mismo mensaje generico para no revelar nada sobre el codigo. Un codigo
-     * PENDING vencido se marca EXPIRED y ese cambio se conserva aunque el canje falle
-     * ({@code noRollbackFor}).
+     * cualquier otro alumno despues. Todo fallo (cuenta inexistente, codigo desconocido, vencido,
+     * revocado o de otro alumno) responde el mismo mensaje generico para no revelar nada sobre el
+     * codigo. Un codigo PENDING vencido se marca EXPIRED y ese cambio se conserva aunque el canje
+     * falle ({@code noRollbackFor}).
      */
     @Transactional(noRollbackFor = BusinessException.class)
     public ExperimentRunResponse redeem(UUID studentId, RedeemAccessCodeRequest request) {
         Instant now = clock.instant();
-        AttemptWindow window = failedRedemptions.get(studentId);
-        if (window != null && window.blocks(now)) {
-            throw new BusinessException(TOO_MANY_ATTEMPTS);
-        }
+        // La reserva es lo primero: se libera como fallo ante cualquier excepcion (finally).
+        reserveAttempt(studentId, now);
+        boolean succeeded = false;
         try {
-            ExperimentRun run = redeemOrFail(studentId, AccessCode.hash(request.code()), now);
-            failedRedemptions.remove(studentId);
+            // El alumno se resuelve antes de tocar el codigo: una cuenta borrada no debe servir de
+            // oraculo sobre la validez del codigo, y cuenta como intento fallido.
+            Student student = studentRepository.findById(studentId)
+                    .orElseThrow(() -> new BusinessException(INVALID_CODE));
+            ExperimentRun run = redeemOrFail(student, AccessCode.hash(request.code()), now);
+            succeeded = true;
             return ExperimentRunResponse.from(run);
-        } catch (BusinessException e) {
-            failedRedemptions.compute(studentId, (id, current) -> AttemptWindow.recordFailure(current, now));
-            throw e;
+        } finally {
+            if (succeeded) {
+                recordSuccess(studentId);
+            } else {
+                recordFailure(studentId);
+            }
         }
     }
 
-    private ExperimentRun redeemOrFail(UUID studentId, String hash, Instant now) {
-        ExperimentRun run = runRepository.findByAccessCodeHashAndStatus(hash, ExperimentRunStatus.PENDING)
+    private ExperimentRun redeemOrFail(Student student, String hash, Instant now) {
+        // Bloqueo de fila: dos alumnos con el mismo codigo se serializan; el segundo relee el
+        // participante ya vinculado (estado confirmado) y recibe el error generico.
+        ExperimentRun run = runRepository.findByAccessCodeHashAndStatusForUpdate(hash, ExperimentRunStatus.PENDING)
                 .orElseThrow(() -> new BusinessException(INVALID_CODE));
         if (run.getAccessCodeExpiresAt().isBefore(now)) {
             run.expire(now);
@@ -104,23 +112,23 @@ public class StudentExperimentService {
             throw new BusinessException(INVALID_CODE);
         }
         StudyParticipant participant = run.getParticipant();
-        if (participant.getStudent() == null) {
-            bindStudent(participant, studentId);
-        } else if (!participant.isLinkedTo(studentId)) {
+        boolean firstRedemption = participant.getStudent() == null;
+        if (firstRedemption) {
+            requireNoOtherParticipant(participant, student.getId());
+        } else if (!participant.isLinkedTo(student.getId())) {
             throw new BusinessException(INVALID_CODE);
         }
-        try {
-            run.redeem(now);
-        } catch (IllegalStateException e) {
-            throw new BusinessException(INVALID_CODE);
+        // El canje del dominio va ANTES de vincular: si su precondicion falla, nunca queda un
+        // participante vinculado a medias (el cambio se confirmaria por noRollbackFor).
+        invalidCodeOnDomainFailure(() -> run.redeem(now));
+        if (firstRedemption) {
+            invalidCodeOnDomainFailure(() -> participant.linkStudent(student));
         }
         return run;
     }
 
     /** Un alumno ocupa a lo sumo un participante por estudio (uk_study_student); se verifica antes de vincular. */
-    private void bindStudent(StudyParticipant participant, UUID studentId) {
-        Student student = studentRepository.findById(studentId)
-                .orElseThrow(() -> new NotFoundException("Student not found"));
+    private void requireNoOtherParticipant(StudyParticipant participant, UUID studentId) {
         boolean alreadyAnotherParticipant = participantRepository
                 .findByStudyIdAndStudentId(participant.getStudy().getId(), studentId)
                 .filter(other -> !other.getId().equals(participant.getId()))
@@ -128,8 +136,11 @@ public class StudentExperimentService {
         if (alreadyAnotherParticipant) {
             throw new BusinessException(INVALID_CODE);
         }
+    }
+
+    private static void invalidCodeOnDomainFailure(Runnable action) {
         try {
-            participant.linkStudent(student);
+            action.run();
         } catch (IllegalStateException e) {
             throw new BusinessException(INVALID_CODE);
         }
@@ -196,9 +207,15 @@ public class StudentExperimentService {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Una ejecucion ajena responde igual que una inexistente. */
+    /**
+     * Una ejecucion ajena responde igual que una inexistente. Toma el bloqueo de fila (start,
+     * complete y cancel escriben): la segunda transaccion concurrente espera y relee el estado ya
+     * confirmado, asi que un start repetido conserva el primer {@code startedAt}, la misma clave de
+     * finalizacion devuelve el resultado guardado y otra clave sobre una ejecucion COMPLETED
+     * recibe "Run is not active" (400) en lugar de sobrescribir el texto del ganador.
+     */
     private ExperimentRun requireOwnRun(UUID studentId, UUID runId) {
-        return runRepository.findByIdAndParticipantStudentId(runId, studentId)
+        return runRepository.findByIdAndParticipantStudentIdForUpdate(runId, studentId)
                 .orElseThrow(() -> new NotFoundException("Run not found"));
     }
 
@@ -211,22 +228,48 @@ public class StudentExperimentService {
         }
     }
 
-    /** Ventana fija de fallos: arranca con el primer fallo y se reinicia al vencer. */
-    record AttemptWindow(Instant startedAt, int failures) {
+    // ------------------------------------------------------------ rate limit
 
-        static AttemptWindow recordFailure(AttemptWindow current, Instant now) {
-            if (current == null || current.expired(now)) {
-                return new AttemptWindow(now, 1);
+    /** Ventana fija por alumno: fallos confirmados y reservas en vuelo (intentos aun sin resolver). */
+    private record AttemptWindow(Instant windowStart, int failures, int inFlight) {
+
+        boolean expired(Instant now) {
+            return windowStart.plus(WINDOW).isBefore(now);
+        }
+    }
+
+    /** Reserva un intento de forma atomica; lanza si fallos + en vuelo ya alcanzan el maximo. */
+    private void reserveAttempt(UUID studentId, Instant now) {
+        evictExpired(now);
+        boolean[] reserved = {false};
+        attempts.compute(studentId, (id, current) -> {
+            AttemptWindow base = (current == null || current.expired(now)) ? new AttemptWindow(now, 0, 0) : current;
+            if (base.failures() + base.inFlight() >= MAX_FAILURES) {
+                return base; // sin cambios: bloqueado
             }
-            return new AttemptWindow(current.startedAt, current.failures + 1);
+            reserved[0] = true;
+            return new AttemptWindow(base.windowStart(), base.failures(), base.inFlight() + 1);
+        });
+        if (!reserved[0]) {
+            throw new BusinessException(TOO_MANY_ATTEMPTS);
         }
+    }
 
-        boolean blocks(Instant now) {
-            return !expired(now) && failures >= MAX_FAILED_REDEMPTIONS;
-        }
+    private void recordFailure(UUID studentId) {
+        attempts.computeIfPresent(studentId, (id, w) ->
+                new AttemptWindow(w.windowStart(), w.failures() + 1, Math.max(0, w.inFlight() - 1)));
+    }
 
-        private boolean expired(Instant now) {
-            return !now.isBefore(startedAt.plus(FAILURE_WINDOW));
-        }
+    private void recordSuccess(UUID studentId) {
+        attempts.remove(studentId);
+    }
+
+    private void evictExpired(Instant now) {
+        attempts.entrySet().removeIf(e -> e.getValue().inFlight() == 0 && e.getValue().expired(now));
+    }
+
+    /** Solo para pruebas: alumnos con ventana de intentos viva. */
+    int trackedStudents() {
+        return attempts.size();
     }
 }

@@ -403,6 +403,9 @@ class ResearchAnnotationServiceTests {
         String a = fixture.codes().get(0);
         String b = fixture.codes().get(1);
         stubResearcher();
+        lenient().when(importRepository.findFirstByBatchIdAndSlotAndSupersededAtIsNull(
+                        fixture.batch().getId(), AnnotationSlot.ADJUDICATED))
+                .thenReturn(Optional.empty());
         String csv = "sample_code,score\n" + a + ",1\n" + b + ",0\n";
 
         assertThatThrownBy(() -> service.importScores(researcherId, studyId, fixture.batch().getId(),
@@ -485,7 +488,7 @@ class ResearchAnnotationServiceTests {
     }
 
     @Test
-    void ratersMustBeDistinctAndTheSameFileCannotBeImportedTwice() {
+    void ratersMustBeDistinctAndTheSameFileCannotReplaceTheCurrentImport() {
         Fixture fixture = orthographyBatch("uno", "dos");
         stubResearcher();
         String csv = "sample_code,score\n" + fixture.codes().get(0) + ",1\n" + fixture.codes().get(1) + ",0\n";
@@ -501,12 +504,40 @@ class ResearchAnnotationServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("distinct");
 
-        when(importRepository.existsByBatchIdAndSlotAndFileSha256(fixture.batch().getId(), AnnotationSlot.RATER_1,
-                sha256(csv.getBytes(UTF_8)))).thenReturn(true);
+        // Same content as the CURRENT import for that slot: refused.
         assertThatThrownBy(() -> service.importScores(researcherId, studyId, fixture.batch().getId(),
                 AnnotationSlot.RATER_1, "Ana", csv.getBytes(UTF_8)))
-                .isInstanceOf(ConflictException.class);
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("already the current import");
         verify(importRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void reuploadingAnEarlierFileAfterRevisionCreatesANewVersion() {
+        Fixture fixture = orthographyBatch("uno dos", "dos tres");
+        String a = fixture.codes().get(0);
+        String b = fixture.codes().get(1);
+        String v1 = "sample_code,score\n" + a + ",1\n" + b + ",0\n";
+        String v2 = "sample_code,score\n" + a + ",2\n" + b + ",0\n";
+        stubImportPersistence();
+        stubCurrentImports();
+
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_2, "Beto",
+                v1.getBytes(UTF_8));
+        service.importScores(researcherId, studyId, fixture.batch().getId(), AnnotationSlot.RATER_2, "Beto",
+                v2.getBytes(UTF_8));
+
+        // v1's hash (H1) only matches a SUPERSEDED import now, so re-uploading it is a new version (v3).
+        AnnotationBatchResponse third = service.importScores(researcherId, studyId, fixture.batch().getId(),
+                AnnotationSlot.RATER_2, "Beto", v1.getBytes(UTF_8));
+
+        AnnotationImport current = current(AnnotationSlot.RATER_2);
+        assertThat(current.getVersion()).isEqualTo(3);
+        assertThat(current.getFileSha256()).isEqualTo(sha256(v1.getBytes(UTF_8)));
+        assertThat(current.isCurrent()).isTrue();
+        assertThat(third.imports()).hasSize(3);
+        assertThat(third.imports().get(2).version()).isEqualTo(3);
+        assertThat(third.imports().get(2).current()).isTrue();
     }
 
     @Test

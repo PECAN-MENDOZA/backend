@@ -75,7 +75,6 @@ public class ResearchAnnotationService {
     private static final int MAX_LISTED_CODES = 20;
     private static final Pattern SCORE = Pattern.compile("\\d{1,9}");
     private static final String SAMPLE_CODE_CONSTRAINT = "uk_annotation_sample_code";
-    private static final String IMPORT_HASH_CONSTRAINT = "uk_ann_import_hash";
     private static final String IMPORT_VERSION_CONSTRAINT = "uk_ann_import_version";
     private static final String IMPORT_CURRENT_CONSTRAINT = "uk_ann_import_current";
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
@@ -312,9 +311,11 @@ public class ResearchAnnotationService {
         List<AnnotationItem> items = itemRepository.findByBatchIdOrderByPositionAsc(batchId);
         Map<String, Integer> scores = parseScores(batch.getKind(), rows, items);
         requireDistinctRater(batchId, slot, raterName);
-        if (importRepository.existsByBatchIdAndSlotAndFileSha256(batchId, slot, hash)) {
-            throw new ConflictException("This file was already imported for slot " + slot);
-        }
+        importRepository.findFirstByBatchIdAndSlotAndSupersededAtIsNull(batchId, slot)
+                .filter(current -> current.getFileSha256().equals(hash))
+                .ifPresent(current -> {
+                    throw new ConflictException("This file is already the current import for slot " + slot);
+                });
         Instant now = clock.instant();
         AnnotationImport rater1Basis = null;
         AnnotationImport rater2Basis = null;
@@ -334,9 +335,6 @@ public class ResearchAnnotationService {
         try {
             imported = importRepository.saveAndFlush(imported);
         } catch (DataIntegrityViolationException e) {
-            if (violates(e, IMPORT_HASH_CONSTRAINT)) {
-                throw new ConflictException("This file was already imported for slot " + slot);
-            }
             if (violates(e, IMPORT_VERSION_CONSTRAINT) || violates(e, IMPORT_CURRENT_CONSTRAINT)) {
                 throw new ConflictException("Another import for slot " + slot + " was recorded at the same time, retry");
             }

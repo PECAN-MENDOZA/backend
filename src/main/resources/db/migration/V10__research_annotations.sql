@@ -56,7 +56,6 @@ CREATE TABLE annotation_imports (
     superseded_at TIMESTAMP WITH TIME ZONE,
     based_on_rater1_import_id UUID REFERENCES annotation_imports(id),
     based_on_rater2_import_id UUID REFERENCES annotation_imports(id),
-    CONSTRAINT uk_ann_import_hash UNIQUE (batch_id, slot, file_sha256),
     CONSTRAINT uk_ann_import_version UNIQUE (batch_id, slot, version),
     CONSTRAINT ck_annotation_slot CHECK (slot IN ('RATER_1', 'RATER_2', 'ADJUDICATED')),
     CONSTRAINT ck_annotation_import_version CHECK (version >= 1),

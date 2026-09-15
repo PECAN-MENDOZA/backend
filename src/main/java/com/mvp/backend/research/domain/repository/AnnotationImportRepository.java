@@ -16,6 +16,4 @@ public interface AnnotationImportRepository extends JpaRepository<AnnotationImpo
     Optional<AnnotationImport> findFirstByBatchIdAndSlotAndSupersededAtIsNull(UUID batchId, AnnotationSlot slot);
 
     Optional<AnnotationImport> findFirstByBatchIdAndSlotOrderByVersionDesc(UUID batchId, AnnotationSlot slot);
-
-    boolean existsByBatchIdAndSlotAndFileSha256(UUID batchId, AnnotationSlot slot, String fileSha256);
 }

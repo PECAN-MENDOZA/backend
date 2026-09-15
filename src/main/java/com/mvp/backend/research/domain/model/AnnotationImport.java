@@ -28,7 +28,6 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "annotation_imports",
         uniqueConstraints = {
-            @UniqueConstraint(name = "uk_ann_import_hash", columnNames = {"batch_id", "slot", "file_sha256"}),
             @UniqueConstraint(name = "uk_ann_import_version", columnNames = {"batch_id", "slot", "version"})
         })
 @Getter

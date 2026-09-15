@@ -19,6 +19,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -29,7 +30,9 @@ import lombok.NoArgsConstructor;
  * CANCELLED / EXPIRED / TECHNICAL_FAILURE.
  */
 @Entity
-@Table(name = "experiment_runs")
+@Table(
+        name = "experiment_runs",
+        uniqueConstraints = @UniqueConstraint(name = "uk_runs_completion_key", columnNames = "completion_key"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ExperimentRun {
@@ -78,7 +81,7 @@ public class ExperimentRun {
     @Column(name = "final_text", columnDefinition = "TEXT")
     private String finalText;
 
-    @Column(name = "completion_key", unique = true)
+    @Column(name = "completion_key")
     private UUID completionKey;
 
     @Column(name = "app_version", length = 80)

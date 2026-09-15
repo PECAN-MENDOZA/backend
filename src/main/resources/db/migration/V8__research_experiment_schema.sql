@@ -54,7 +54,7 @@ CREATE TABLE experiment_runs (
     completed_at TIMESTAMP WITH TIME ZONE,
     duration_ms BIGINT,
     final_text TEXT,
-    completion_key UUID UNIQUE,
+    completion_key UUID CONSTRAINT uk_runs_completion_key UNIQUE,
     app_version VARCHAR(80),
     backend_version VARCHAR(80),
     model_version VARCHAR(160),

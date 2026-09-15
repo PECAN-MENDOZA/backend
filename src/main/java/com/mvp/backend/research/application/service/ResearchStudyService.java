@@ -1,14 +1,14 @@
 package com.mvp.backend.research.application.service;
 
+import static com.mvp.backend.shared.persistence.ConstraintViolations.violates;
+
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -377,21 +377,6 @@ public class ResearchStudyService {
             case PENDING -> run.getRedeemedAt() != null || run.getAccessCodeExpiresAt().isAfter(now);
             default -> false;
         };
-    }
-
-    /**
-     * Detecta la restriccion violada: primero por el nombre que expone Hibernate
-     * ({@link ConstraintViolationException#getConstraintName()}, sin distinguir mayusculas) y, si el
-     * driver no lo informa (o lo decora), por el texto de la causa mas especifica.
-     */
-    private static boolean violates(DataIntegrityViolationException e, String constraint) {
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof ConstraintViolationException cve && constraint.equalsIgnoreCase(cve.getConstraintName())) {
-                return true;
-            }
-        }
-        String message = String.valueOf(e.getMostSpecificCause().getMessage()).toLowerCase(Locale.ROOT);
-        return message.contains(constraint);
     }
 
     private ResearchStudyResponse toStudyResponse(ResearchStudy study) {

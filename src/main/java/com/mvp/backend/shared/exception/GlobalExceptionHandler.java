@@ -25,6 +25,14 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, exception.getMessage(), request, Map.of());
     }
 
+    // Unico mapeo a 409. No existe un handler generico de DataIntegrityViolationException a proposito:
+    // cada servicio traduce solo las restricciones que reconoce (p. ej. el codigo de estudio duplicado)
+    // a ConflictException; cualquier otra violacion de integridad es un bug y debe seguir siendo 500.
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ApiError> handleConflict(ConflictException exception, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, exception.getMessage(), request, Map.of());
+    }
+
     @ExceptionHandler(UnauthorizedException.class)
     ResponseEntity<ApiError> handleUnauthorized(UnauthorizedException exception, HttpServletRequest request) {
         return error(HttpStatus.UNAUTHORIZED, exception.getMessage(), request, Map.of());

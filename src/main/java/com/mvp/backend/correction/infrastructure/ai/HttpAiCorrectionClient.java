@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import com.mvp.backend.config.AiProperties;
 import com.mvp.backend.shared.exception.AiServiceException;
@@ -35,6 +36,8 @@ public class HttpAiCorrectionClient implements AiCorrectionClient {
                     .retrieve()
                     .body(AiCorrectionResponse.class);
         } catch (RestClientException exception) {
+            // Solo clase y estado HTTP: el mensaje o el cuerpo podrian contener el texto del alumno.
+            log.warn("AI correction request failed: {}", describe(exception));
             throw new AiServiceException("AI correction service is unavailable", exception);
         }
     }
@@ -49,7 +52,16 @@ public class HttpAiCorrectionClient implements AiCorrectionClient {
                     .toBodilessEntity();
         } catch (RestClientException exception) {
             // Best-effort: la indisponibilidad de la IA no debe romper el registro del feedback del alumno.
-            log.warn("Could not deliver correction feedback to the AI service", exception);
+            log.warn("Could not deliver correction feedback to the AI service: {}", describe(exception));
         }
+    }
+
+    /** Clase de la excepcion y, si hubo respuesta, su codigo HTTP; nunca el mensaje ni el cuerpo. */
+    static String describe(RestClientException exception) {
+        String description = exception.getClass().getSimpleName();
+        if (exception instanceof RestClientResponseException response) {
+            description += " status=" + response.getStatusCode().value();
+        }
+        return description;
     }
 }

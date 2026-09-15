@@ -45,6 +45,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/**", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**")
                         .permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+                        // Defensa en profundidad: los controladores repiten estas reglas con @PreAuthorize,
+                        // pero un endpoint nuevo bajo estos prefijos queda protegido aunque olvide la anotacion.
+                        .requestMatchers("/api/v1/research/**").hasRole("RESEARCHER")
+                        .requestMatchers("/api/v1/experiments/**").hasRole("STUDENT")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)))

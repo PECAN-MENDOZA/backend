@@ -5,13 +5,34 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
-import tools.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 class StubAiCorrectionClientTests {
 
-    private final StubAiCorrectionClient client = new StubAiCorrectionClient(new ObjectMapper());
+    private final StubAiCorrectionClient client = new StubAiCorrectionClient();
+    private final Logger logger = (Logger) LoggerFactory.getLogger(StubAiCorrectionClient.class);
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+
+    @BeforeEach
+    void captureLogs() {
+        logger.setLevel(Level.TRACE);
+        logs.start();
+        logger.addAppender(logs);
+    }
+
+    @AfterEach
+    void releaseLogs() {
+        logger.detachAppender(logs);
+        logger.setLevel(null);
+    }
 
     @Test
     void correctEchoesOriginalTextAndKeepsStudent() {
@@ -37,5 +58,17 @@ class StubAiCorrectionClientTests {
         assertThatCode(() -> client.sendFeedback(
                 UUID.randomUUID(), "mi lapis se callo", "mi lapiz se cayo", true))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void neverLogsTheStudentText() {
+        UUID studentId = UUID.randomUUID();
+
+        client.correct("mi mama me dijo que baya", studentId);
+        client.sendFeedback(studentId, "mi lapis se callo", "mi lapiz se cayo", true);
+
+        assertThat(logs.list).isNotEmpty();
+        assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage).allSatisfy(message -> assertThat(message)
+                .doesNotContain("baya", "lapis", "lapiz", studentId.toString()));
     }
 }

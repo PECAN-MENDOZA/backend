@@ -8,14 +8,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-import tools.jackson.databind.ObjectMapper;
-
 /**
  * Implementacion simulada del servicio de IA. Se usa mientras la IA real (BETO)
  * no esta lista, para poder desplegar el backend y avanzar la integracion del
- * teclado y el portal web. Hace eco del texto recibido, devuelve una sugerencia
- * fija y registra en el log el JSON de entrada y salida para supervisar el
- * contrato durante la integracion.
+ * teclado y el portal web. Hace eco del texto recibido y devuelve una sugerencia
+ * fija. Solo registra en el log la operacion y el tamano del texto: el texto del
+ * alumno (y el identificador que lo vincula) nunca va a los logs.
  *
  * <p>Activa con {@code app.ai.mode=stub} (valor por defecto si la propiedad falta).
  * Para volver a la IA real basta con {@code app.ai.mode=http}; no requiere cambios
@@ -28,39 +26,27 @@ public class StubAiCorrectionClient implements AiCorrectionClient {
     private static final Logger log = LoggerFactory.getLogger(StubAiCorrectionClient.class);
     private static final String SIMULATED_SUGGESTION = "(sugerencia simulada)";
     private static final long SIMULATED_PROCESSING_TIME_MS = 5;
+    private static final String SIMULATED_MODEL_VERSION = "stub";
 
-    private final ObjectMapper objectMapper;
-
-    public StubAiCorrectionClient(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public StubAiCorrectionClient() {
         log.info("[AI-STUB] Modo IA simulado activo (app.ai.mode=stub). La IA real esta deshabilitada.");
     }
 
     @Override
     public AiCorrectionResponse correct(String originalText, UUID studentId) {
-        logJson(">> correct request", new AiCorrectionRequest(originalText, studentId));
+        log.info("[AI-STUB] stub correction: {} chars", originalText == null ? 0 : originalText.length());
         // Eco con sugerencias fijas: el objetivo es validar el flujo de UI, no la calidad de correccion.
-        AiCorrectionResponse response = new AiCorrectionResponse(
+        return new AiCorrectionResponse(
                 studentId,
                 originalText,
                 SIMULATED_PROCESSING_TIME_MS,
-                List.of(originalText, SIMULATED_SUGGESTION));
-        logJson("<< correct response", response);
-        return response;
+                List.of(originalText, SIMULATED_SUGGESTION),
+                SIMULATED_MODEL_VERSION);
     }
 
     @Override
     public void sendFeedback(UUID studentId, String originalText, String selectedSuggestion, boolean accepted) {
-        // No-op: en modo simulado solo se registra el payload (mantiene la semantica best-effort).
-        logJson(">> feedback request", new AiFeedbackRequest(studentId, originalText, selectedSuggestion, accepted));
-    }
-
-    private void logJson(String label, Object payload) {
-        try {
-            log.info("[AI-STUB] {} {}", label, objectMapper.writeValueAsString(payload));
-        } catch (RuntimeException exception) {
-            // El logging nunca debe romper la llamada: si la serializacion falla, registramos sin formato.
-            log.info("[AI-STUB] {} {}", label, payload);
-        }
+        // No-op: en modo simulado solo se registra la operacion (mantiene la semantica best-effort).
+        log.info("[AI-STUB] stub feedback: accepted={}", accepted);
     }
 }

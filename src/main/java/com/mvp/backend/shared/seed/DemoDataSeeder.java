@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
@@ -43,6 +44,7 @@ public class DemoDataSeeder implements ApplicationRunner {
     private final ObjectMapper objectMapper;
     private final ApplicationContext applicationContext;
     private final TransactionTemplate transactionTemplate;
+    private final String researcherEmail;
 
     public DemoDataSeeder(
             DemoSeedProperties properties,
@@ -51,7 +53,8 @@ public class DemoDataSeeder implements ApplicationRunner {
             PersonalDataCipher personalDataCipher,
             ObjectMapper objectMapper,
             ApplicationContext applicationContext,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            @Value("${app.researcher.email:}") String researcherEmail) {
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.passwordEncoder = passwordEncoder;
@@ -59,6 +62,7 @@ public class DemoDataSeeder implements ApplicationRunner {
         this.objectMapper = objectMapper;
         this.applicationContext = applicationContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.researcherEmail = researcherEmail;
     }
 
     @Override
@@ -139,12 +143,76 @@ public class DemoDataSeeder implements ApplicationRunner {
             insertMonthlyReport(student.id(), reportMonth, generatedAt, metrics);
         }
 
+        seedDemoTest(now);
+
         log.info("Demo seed completed: 1 teacher, {} students, {} correction sessions.",
                 students.size(),
                 sessions.size());
         // Nunca se registran contrasenas en claro: viven en app.demo-seed.* (solo entornos de demo).
         log.info("Teacher login: {} (password: app.demo-seed.teacher-password)", teacherEmail);
         log.info("Student login example: {} (password: app.demo-seed.student-password)", students.getFirst().username());
+    }
+
+    /**
+     * Siembra una prueba de oraciones DRAFT propiedad del investigador semilla, si existe
+     * (lo crea {@code ResearcherAccountSeeder}, que corre antes por su {@code @Order}). Sin
+     * investigador configurado o sembrado, se omite: la prueba nunca se asigna a nadie ni
+     * necesita un investigador para el resto de la semilla.
+     */
+    private void seedDemoTest(Instant now) {
+        if (researcherEmail == null || researcherEmail.isBlank()) {
+            log.info("Demo test seed skipped: app.researcher.email is not set.");
+            return;
+        }
+        List<UUID> researchers = jdbcTemplate.query(
+                "select id from researcher_users where email = ?",
+                (rs, rowNum) -> (UUID) rs.getObject("id"),
+                researcherEmail);
+        if (researchers.isEmpty()) {
+            log.info("Demo test seed skipped: no researcher account found for {}.", researcherEmail);
+            return;
+        }
+        UUID testId = UUID.randomUUID();
+        jdbcTemplate.update(
+                """
+                insert into sentence_tests (id, code, title, status, notes, created_by, created_at)
+                values (?, ?, ?, 'DRAFT', ?, ?, ?)
+                """,
+                testId,
+                "PRUEBA-DEMO",
+                "Prueba de demostracion",
+                "Prueba de ejemplo para explorar el flujo de investigador sin afectar datos reales.",
+                researchers.getFirst(),
+                Timestamp.from(now));
+        List<DemoSentence> sentences = demoTestSentences();
+        for (int index = 0; index < sentences.size(); index++) {
+            insertTestSentence(testId, index + 1, sentences.get(index));
+        }
+        log.info("Demo test seeded: {} ({} sentences).", "PRUEBA-DEMO", sentences.size());
+    }
+
+    private void insertTestSentence(UUID testId, int position, DemoSentence sentence) {
+        jdbcTemplate.update(
+                """
+                insert into test_sentences (id, test_id, position, kind, reference_text, assistance)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                UUID.randomUUID(),
+                testId,
+                position,
+                sentence.kind(),
+                sentence.referenceText(),
+                sentence.assistance());
+    }
+
+    private static List<DemoSentence> demoTestSentences() {
+        return List.of(
+                new DemoSentence("DICTATED", "El perro corre por el parque.", "ASSISTED"),
+                new DemoSentence("DICTATED", "Mi abuela cocina arroz con pollo.", "ASSISTED"),
+                new DemoSentence("DICTATED", "Los ninos juegan futbol en el patio.", "ASSISTED"),
+                new DemoSentence("DICTATED", "El sol brilla sobre las montanas.", "UNASSISTED"),
+                new DemoSentence("DICTATED", "Mi hermano lee un libro de aventuras.", "UNASSISTED"),
+                new DemoSentence("FREE", "Escribe una oracion sobre tu mascota.", "UNASSISTED"));
     }
 
     private void shutdownIfRequested() {
@@ -448,6 +516,9 @@ public class DemoDataSeeder implements ApplicationRunner {
             String correctedText,
             String alternateSuggestion,
             List<WordCorrectionSeed> wordCorrections) {
+    }
+
+    private record DemoSentence(String kind, String referenceText, String assistance) {
     }
 
     private record SessionSeed(

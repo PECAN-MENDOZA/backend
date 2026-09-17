@@ -373,7 +373,7 @@ class ResearchTestApiTests {
         String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(csv));
         assertThat(digest).isEqualTo(sha);
         String text = new String(csv, StandardCharsets.UTF_8);
-        assertThat(text).startsWith("﻿test_code,student_username,attempt_id,");
+        assertThat(text).startsWith("\uFEFFtest_code,student_username,attempt_id,");
         assertThat(text).contains("OTRA-" + suffix + ",tigre-" + suffix + "," + otherAttemptId
                 + ",1,DICTATED,ASSISTED,El perro corre.,El pero corre.,false,3,1,AUTO,3900,4000,0,0,0,0,,app-1,false\r\n");
         assertThat(text).contains(",2,FREE,UNASSISTED,Escribe sobre tu mascota,Mi gato duerme mucho,false,4,,PENDING,"

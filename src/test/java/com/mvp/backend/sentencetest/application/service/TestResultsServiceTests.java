@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -23,8 +25,14 @@ import com.mvp.backend.sentencetest.application.dto.TestResultsResponse;
 import com.mvp.backend.sentencetest.application.service.ResearchTestService.Cohort;
 import com.mvp.backend.sentencetest.domain.model.Assistance;
 import com.mvp.backend.sentencetest.domain.model.AttemptStatus;
+import com.mvp.backend.sentencetest.domain.model.SentenceKind;
+import com.mvp.backend.sentencetest.domain.model.SentenceTest;
+import com.mvp.backend.sentencetest.domain.model.TestAttempt;
+import com.mvp.backend.sentencetest.domain.model.TestResponse;
+import com.mvp.backend.sentencetest.domain.model.TestSentence;
 import com.mvp.backend.sentencetest.domain.repository.TestAssignmentRepository;
 import com.mvp.backend.sentencetest.domain.repository.TestAttemptRepository;
+import com.mvp.backend.student.domain.model.Student;
 
 @ExtendWith(MockitoExtension.class)
 class TestResultsServiceTests {
@@ -192,6 +200,48 @@ class TestResultsServiceTests {
         assertThat(results.conditions().get(Assistance.ASSISTED).participants()).isEqualTo(3);
         // La huella del CSV cambia porque el CSV si incluye al excluido.
         assertThat(results.datasetSha256()).isNotEqualTo(resultsFor(SyntheticCohort.build(false)).datasetSha256());
+    }
+
+    @Test
+    void skippedResponsesDoNotCountTowardSuggestionCounters() {
+        // Una oracion con ayuda, omitida, con contadores de sugerencias no nulos: no debe aportar
+        // ni a offered/accepted ni a participants, aunque el intento este completo.
+        SentenceTest test = new SentenceTest("PRUEBA-02", "Prueba omitidas", SyntheticCohort.RESEARCHER);
+        test.activate(1, SyntheticCohort.NOW);
+        TestSentence sentence = new TestSentence(test, 1, SentenceKind.DICTATED, "El perro corre.", Assistance.ASSISTED);
+        TestAttempt attempt = new TestAttempt(test, new Student("alumno-x", "Colegio", "hash"), "app-1", "backend-1",
+                SyntheticCohort.NOW);
+        attempt.recordModelVersion("beto-v3");
+        TestResponse skipped = new TestResponse(attempt, sentence, SyntheticCohort.NOW);
+        skipped.finish("", null, 500L, true, new TestResponse.Counters(5, 3, 1, 0), UUID.randomUUID(), SyntheticCohort.NOW);
+        attempt.complete(SyntheticCohort.NOW);
+
+        Cohort cohort = new Cohort(test, List.of(sentence), List.of(attempt),
+                Map.of(attempt.getId(), List.of(skipped)), Map.of(attempt.getStudent().getId(), "alumno-x"));
+        TestResultsResponse results = resultsFor(cohort);
+
+        ConditionMetrics assisted = results.conditions().get(Assistance.ASSISTED);
+        assertThat(assisted.participants()).isZero();
+        assertThat(assisted.acceptanceRate().offered()).isZero();
+        assertThat(assisted.acceptanceRate().accepted()).isZero();
+        assertThat(assisted.acceptanceRate().ratePct()).isNull();
+    }
+
+    @Test
+    void zeroCompletedAttemptsProduceNoException() {
+        SentenceTest test = new SentenceTest("PRUEBA-03", "Prueba sin intentos", SyntheticCohort.RESEARCHER);
+        test.activate(1, SyntheticCohort.NOW);
+        TestSentence sentence = new TestSentence(test, 1, SentenceKind.DICTATED, "El perro corre.", Assistance.ASSISTED);
+        Cohort cohort = new Cohort(test, List.of(sentence), List.of(), Map.of(), Map.of());
+
+        TestResultsResponse results = resultsFor(cohort);
+
+        assertThat(results.sample().completed()).isZero();
+        assertThat(results.incomplete()).isFalse();
+        assertThat(results.sampleInsufficient()).isTrue();
+        assertThat(results.conditions().get(Assistance.ASSISTED).errorsPer100Words().lower()).isNull();
+        assertThat(results.conditions().get(Assistance.ASSISTED).errorsPer100Words().upper()).isNull();
+        assertThat(results.paired().errorsPer100Words().n()).isZero();
     }
 
     @Test

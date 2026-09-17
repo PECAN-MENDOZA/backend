@@ -24,7 +24,7 @@ public final class TestExportCsv {
             "duration_start_ms", "suggestions_offered", "suggestions_accepted", "suggestions_rejected",
             "suggestions_undone", "model_version", "app_version", "excluded");
 
-    private static final String BOM = "﻿";
+    private static final String BOM = "\uFEFF";
     private static final String CRLF = "\r\n";
 
     private TestExportCsv() {

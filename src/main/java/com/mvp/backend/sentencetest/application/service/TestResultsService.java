@@ -98,12 +98,13 @@ public class TestResultsService {
                 if (!response.isFinished()) {
                     continue;
                 }
-                long[] counters = suggestions.get(assistance);
-                counters[0] += response.getSuggestionsOffered();
-                counters[1] += response.getSuggestionsAccepted();
+                // Una oracion omitida no contribuye a ninguna metrica, incluidos los contadores de sugerencias.
                 if (response.isSkipped()) {
                     continue;
                 }
+                long[] counters = suggestions.get(assistance);
+                counters[0] += response.getSuggestionsOffered();
+                counters[1] += response.getSuggestionsAccepted();
                 participants.get(assistance).add(username);
                 StudentCondition acc = perStudent.computeIfAbsent(username, u -> new EnumMap<>(Assistance.class))
                         .computeIfAbsent(assistance, a -> new StudentCondition());

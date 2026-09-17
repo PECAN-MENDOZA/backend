@@ -1,6 +1,5 @@
 package com.mvp.backend.correction.application.service;
 
-import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -29,13 +28,15 @@ import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
-import com.mvp.backend.experiment.application.service.ExperimentIncidentRecorder;
-import com.mvp.backend.experiment.domain.model.ExperimentCondition;
-import com.mvp.backend.experiment.domain.model.ExperimentRun;
-import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
+import com.mvp.backend.sentencetest.application.service.StudentTestService;
+import com.mvp.backend.sentencetest.domain.model.AutoErrorDetail;
+import com.mvp.backend.sentencetest.domain.model.TestAttempt;
+import com.mvp.backend.sentencetest.domain.model.TestResponse;
+import com.mvp.backend.sentencetest.domain.repository.TestAttemptRepository;
 import com.mvp.backend.shared.dto.PagedResponse;
 import com.mvp.backend.shared.exception.AiServiceException;
 import com.mvp.backend.shared.exception.BusinessException;
+import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
@@ -44,7 +45,6 @@ import com.mvp.backend.student.domain.repository.StudentRepository;
 public class CorrectionService {
 
     private static final Logger log = LoggerFactory.getLogger(CorrectionService.class);
-    static final String INCIDENT_AI_REQUEST_FAILED = "AI_REQUEST_FAILED";
     static final String INCIDENT_MODEL_VERSION_CHANGED = "MODEL_VERSION_CHANGED";
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
@@ -53,110 +53,109 @@ public class CorrectionService {
     private final CorrectionSessionRepository sessionRepository;
     private final WordCorrectionRepository wordCorrectionRepository;
     private final AiCorrectionClient aiCorrectionClient;
-    private final ExperimentRunRepository runRepository;
-    private final ExperimentIncidentRecorder incidentRecorder;
+    private final StudentTestService studentTestService;
+    private final TestAttemptRepository attemptRepository;
     private final TransactionTemplate readOnlyTransaction;
     private final TransactionTemplate writeTransaction;
     private final ObjectMapper objectMapper;
-    private final Clock clock;
 
     public CorrectionService(
             StudentRepository studentRepository,
             CorrectionSessionRepository sessionRepository,
             WordCorrectionRepository wordCorrectionRepository,
             AiCorrectionClient aiCorrectionClient,
-            ExperimentRunRepository runRepository,
-            ExperimentIncidentRecorder incidentRecorder,
+            StudentTestService studentTestService,
+            TestAttemptRepository attemptRepository,
             PlatformTransactionManager transactionManager,
-            ObjectMapper objectMapper,
-            Clock clock) {
+            ObjectMapper objectMapper) {
         this.studentRepository = studentRepository;
         this.sessionRepository = sessionRepository;
         this.wordCorrectionRepository = wordCorrectionRepository;
         this.aiCorrectionClient = aiCorrectionClient;
-        this.runRepository = runRepository;
-        this.incidentRecorder = incidentRecorder;
+        this.studentTestService = studentTestService;
+        this.attemptRepository = attemptRepository;
         // process() corre en dos fases con la llamada a la IA fuera de toda transaccion (ver process).
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.objectMapper = objectMapper;
-        this.clock = clock;
     }
 
     /**
-     * Correccion en dos fases para que ninguna transaccion abarque la llamada a la IA y la ejecucion
-     * experimental solo se modifique bajo su bloqueo de fila:
+     * Correccion en dos fases para que ninguna transaccion abarque la llamada a la IA y el intento de
+     * prueba solo se modifique bajo su bloqueo de fila:
      * <ol>
-     * <li>Fase A (solo lectura): validar alumno y condicion de la ejecucion; nada se persiste.</li>
-     * <li>Llamada a la IA sin transaccion; un fallo se registra como incidencia en transaccion propia.</li>
-     * <li>Fase B (escritura): relee la ejecucion con bloqueo y revalida; si dejo de estar activa
+     * <li>Fase A (solo lectura): validar alumno y, si hay {@code id_respuesta}, que la oracion sea con
+     * ayuda y este abierta; sin {@code id_respuesta} no puede haber un intento en curso. Nada se persiste.</li>
+     * <li>Llamada a la IA sin transaccion.</li>
+     * <li>Fase B (escritura): bloquea el intento, relee la respuesta y revalida; si la oracion se termino
      * mientras la IA respondia, no se guarda nada. Luego guarda la sesion y la version del modelo.</li>
      * </ol>
      */
     public CorrectionSessionResponse process(UUID studentId, ProcessCorrectionRequest request) {
-        Preflight preflight = readOnlyTransaction.execute(status -> preflight(studentId, request.experimentRunId()));
-        var aiResponse = requestCorrection(request.originalText(), studentId, preflight.runId());
+        Preflight preflight = readOnlyTransaction.execute(status -> preflight(studentId, request.testResponseId()));
+        var aiResponse = requestCorrection(request.originalText(), studentId);
         return writeTransaction.execute(status -> persistCorrection(preflight, request.originalText(), aiResponse));
     }
 
     /** Resultado de la fase de lectura: solo identificadores, ninguna entidad sale de la transaccion. */
-    private record Preflight(UUID studentId, UUID runId) {
+    private record Preflight(UUID studentId, UUID responseId, UUID attemptId) {
     }
 
-    private Preflight preflight(UUID studentId, UUID runId) {
-        // La condicion se verifica antes de tocar la IA o persistir nada: en UNASSISTED el backend
-        // bloquea por su cuenta, independientemente de lo que haga el teclado.
-        if (runId != null) {
-            var run = runRepository.findByIdAndParticipantStudentId(runId, studentId)
-                    .orElseThrow(() -> new NotFoundException("Experiment run not found"));
-            requireAssistedAndActive(run, "Experiment run is not active");
-        }
+    private Preflight preflight(UUID studentId, UUID responseId) {
         requireStudent(studentId);
-        return new Preflight(studentId, runId);
+        if (responseId == null) {
+            // Con una prueba en curso toda correccion debe venir ligada a su oracion: si no, el conteo
+            // de sugerencias y la version del modelo quedarian fuera del intento.
+            if (studentTestService.activeAttempt(studentId).isPresent()) {
+                throw new BusinessException("A sentence test is in progress");
+            }
+            return new Preflight(studentId, null, null);
+        }
+        TestResponse response = studentTestService.responseForCorrection(studentId, responseId);
+        requireAssistedAndOpen(response);
+        return new Preflight(studentId, responseId, response.getAttempt().getId());
     }
 
-    private static void requireAssistedAndActive(ExperimentRun run, String inactiveMessage) {
-        if (!run.isActive()) {
-            throw new BusinessException(inactiveMessage);
+    private static void requireAssistedAndOpen(TestResponse response) {
+        // La condicion se verifica antes de tocar la IA o persistir nada: sin ayuda el backend
+        // bloquea por su cuenta, independientemente de lo que haga el teclado.
+        if (!response.getSentence().isAssisted()) {
+            throw new BusinessException("Contextual correction is disabled for this sentence");
         }
-        if (run.getCondition() == ExperimentCondition.UNASSISTED) {
-            throw new BusinessException("Contextual correction is disabled for this experiment run");
+        if (!response.acceptsCorrections()) {
+            throw new ConflictException("Sentence is not open");
         }
     }
 
-    private AiCorrectionResponse requestCorrection(String originalText, UUID studentId, UUID runId) {
-        try {
-            var aiResponse = aiCorrectionClient.correct(originalText, studentId);
-            if (aiResponse == null) {
-                throw new AiServiceException("AI correction service returned an empty response", null);
-            }
-            return aiResponse;
-        } catch (AiServiceException exception) {
-            if (runId != null) {
-                // Transaccion propia (aqui no hay ninguna abierta ni bloqueo tomado): la incidencia queda.
-                incidentRecorder.record(runId, INCIDENT_AI_REQUEST_FAILED);
-            }
-            throw exception;
+    private AiCorrectionResponse requestCorrection(String originalText, UUID studentId) {
+        var aiResponse = aiCorrectionClient.correct(originalText, studentId);
+        if (aiResponse == null) {
+            throw new AiServiceException("AI correction service returned an empty response", null);
         }
+        return aiResponse;
     }
 
     private CorrectionSessionResponse persistCorrection(Preflight preflight, String originalText, AiCorrectionResponse aiResponse) {
-        ExperimentRun run = null;
-        if (preflight.runId() != null) {
-            run = runRepository.findByIdAndParticipantStudentIdForUpdate(preflight.runId(), preflight.studentId())
-                    .orElseThrow(() -> new NotFoundException("Experiment run not found"));
-            // Mientras la IA respondia, el telefono pudo completar o cancelar la ejecucion: la
-            // correccion llega tarde y no debe dejar rastro (el teclado muestra "texto cambiado").
-            requireAssistedAndActive(run, "Experiment run is no longer active");
+        TestAttempt attempt = null;
+        TestResponse response = null;
+        if (preflight.responseId() != null) {
+            // Mismo bloqueo que Comenzar/Terminar: la version del modelo y las incidencias del intento
+            // se escriben en serie con el resto de transiciones del intento.
+            attempt = attemptRepository.findByIdForUpdate(preflight.attemptId())
+                    .orElseThrow(() -> new NotFoundException("Attempt not found"));
+            response = studentTestService.responseForCorrection(preflight.studentId(), preflight.responseId());
+            // Mientras la IA respondia, el telefono pudo terminar la oracion: la correccion llega tarde
+            // y no debe dejar rastro (el teclado muestra "texto cambiado").
+            requireAssistedAndOpen(response);
         }
         var student = requireStudent(preflight.studentId());
-        var session = sessionRepository.save(new CorrectionSession(student, originalText, run));
-        if (run != null && !run.recordModelVersion(aiResponse.modelVersion())) {
-            // La ejecucion ya fue atendida por otra version del modelo: se audita, no se oculta ni se
-            // rechaza. Directamente sobre la entidad bloqueada (el recorder REQUIRES_NEW esperaria
-            // por este mismo bloqueo).
-            run.recordIncident(INCIDENT_MODEL_VERSION_CHANGED, clock.instant());
+        var session = sessionRepository.save(new CorrectionSession(student, originalText, response));
+        if (attempt != null && !attempt.recordModelVersion(aiResponse.modelVersion())) {
+            // El intento ya fue atendido por otra version del modelo: se audita en el intento y en la
+            // respuesta, no se oculta ni se rechaza.
+            attempt.recordIncident();
+            response.appendDetail(AutoErrorDetail.withIncident(response.getAutoErrorDetail(), INCIDENT_MODEL_VERSION_CHANGED));
         }
         List<String> suggestions = normalizeSuggestions(aiResponse.correctedText(), aiResponse.suggestions());
         // El detalle palabra por palabra ya no lo entrega la IA: se derivara por diff
@@ -174,10 +173,10 @@ public class CorrectionService {
         requireStudent(studentId);
         var session = sessionRepository.findByIdAndStudentIdForUpdate(sessionId, studentId)
                 .orElseThrow(() -> new NotFoundException("Correction session not found"));
-        // Una sesion experimental solo admite feedback mientras su ejecucion sigue ACTIVE: al terminar la
-        // ejecucion, la aceptacion queda fija (los lotes semanticos la congelan y TAS aceptada depende de ella).
-        if (session.isExperimental() && !session.getExperimentRun().isActive()) {
-            throw new BusinessException("Feedback is closed for this experiment run");
+        // Una sesion ligada a una oracion solo admite feedback mientras la oracion sigue abierta: al
+        // terminarla, la aceptacion queda fija (los contadores de la respuesta ya se enviaron con Terminar).
+        if (session.isInTest() && session.getTestResponse().isFinished()) {
+            throw new BusinessException("Feedback is closed for this sentence");
         }
         // Valores efectivos: deshacer una sugerencia aplicada equivale a rechazarla, envie lo que envie el flag.
         boolean accepted = request.effectiveAccepted();
@@ -207,9 +206,9 @@ public class CorrectionService {
                 : List.of();
         session.registerFeedback(selectedSuggestion, finalText, accepted, wordCorrections.size(), reason);
         // Se reenvía a la IA el texto validado a mano (texto_final si existe) para su aprendizaje (best-effort).
-        // El feedback de una sesion experimental se guarda pero no se reenvia: el LoRA es global y las
-        // decisiones del experimento no deben alterar el comportamiento del modelo en caliente.
-        if (!session.isExperimental()) {
+        // El feedback de una sesion de prueba se guarda pero no se reenvia: el LoRA es global y las
+        // decisiones tomadas durante una prueba no deben alterar el comportamiento del modelo en caliente.
+        if (!session.isInTest()) {
             forwardAfterCommit(studentId, session.getOriginalText(), acceptedText, accepted);
         }
         return toResponse(session, wordCorrections);

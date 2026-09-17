@@ -12,9 +12,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,20 +34,10 @@ import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
-import com.mvp.backend.experiment.application.service.ExperimentIncidentRecorder;
-import com.mvp.backend.experiment.domain.model.AccessCode;
-import com.mvp.backend.experiment.domain.model.ExperimentCondition;
-import com.mvp.backend.experiment.domain.model.ExperimentRun;
-import com.mvp.backend.experiment.domain.model.ExperimentRunStatus;
-import com.mvp.backend.experiment.domain.repository.ExperimentRunRepository;
-import com.mvp.backend.research.domain.model.ResearchStudy;
-import com.mvp.backend.research.domain.model.Researcher;
-import com.mvp.backend.research.domain.model.StudyParticipant;
-import com.mvp.backend.research.domain.model.StudyProtocol;
-import com.mvp.backend.research.domain.model.TaskVariant;
+import com.mvp.backend.sentencetest.application.service.StudentTestService;
+import com.mvp.backend.sentencetest.domain.repository.TestAttemptRepository;
 import com.mvp.backend.shared.exception.AiServiceException;
 import com.mvp.backend.shared.exception.BusinessException;
-import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 
@@ -70,17 +57,14 @@ class CorrectionServiceTests {
     private AiCorrectionClient aiCorrectionClient;
 
     @Mock
-    private ExperimentRunRepository runRepository;
+    private StudentTestService studentTestService;
 
     @Mock
-    private ExperimentIncidentRecorder incidentRecorder;
+    private TestAttemptRepository attemptRepository;
 
     private CorrectionService correctionService;
 
-    // Fixture experimental: un alumno con una ejecucion ACTIVE por condicion.
     private Student student;
-    private ExperimentRun assistedRun;
-    private ExperimentRun run; // UNASSISTED (control)
 
     @BeforeEach
     void setUp() {
@@ -89,14 +73,11 @@ class CorrectionServiceTests {
                 sessionRepository,
                 wordCorrectionRepository,
                 aiCorrectionClient,
-                runRepository,
-                incidentRecorder,
+                studentTestService,
+                attemptRepository,
                 new NoOpTransactionManager(),
-                new ObjectMapper(),
-                Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC));
+                new ObjectMapper());
         student = readyStudent("student_exp");
-        assistedRun = activeRun(ExperimentCondition.ASSISTED);
-        run = activeRun(ExperimentCondition.UNASSISTED);
     }
 
     @Test
@@ -246,23 +227,10 @@ class CorrectionServiceTests {
                 .hasMessage("Accepted correction requires a selected suggestion");
     }
 
-    // ------------------------------------------------------- experiment runs
+    // --------------------------------------------------------- uso normal
 
     @Test
-    void rejectsCorrectionForActiveUnassistedRun() {
-        when(runRepository.findByIdAndParticipantStudentId(run.getId(), student.getId()))
-                .thenReturn(Optional.of(run));
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", run.getId())))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Contextual correction is disabled for this experiment run");
-        verifyNoInteractions(aiCorrectionClient);
-        verify(sessionRepository, never()).save(any());
-    }
-
-    @Test
-    void normalCorrectionStillWorksWithoutRunId() {
+    void normalCorrectionStillWorksWithoutResponseId() {
         when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
         when(sessionRepository.save(any(CorrectionSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(aiCorrectionClient.correct("texto", student.getId())).thenReturn(aiResponse("texto", null));
@@ -270,141 +238,19 @@ class CorrectionServiceTests {
         correctionService.process(student.getId(), new ProcessCorrectionRequest("texto"));
 
         verify(aiCorrectionClient).correct("texto", student.getId());
-        verifyNoInteractions(runRepository, incidentRecorder);
+        verify(sessionRepository).save(argThat(session -> !session.isInTest()));
+        verifyNoInteractions(attemptRepository);
     }
 
     @Test
-    void unknownOrForeignRunIsNotFound() {
-        UUID foreignRunId = UUID.randomUUID();
-        when(runRepository.findByIdAndParticipantStudentId(foreignRunId, student.getId()))
-                .thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", foreignRunId)))
-                .isInstanceOf(NotFoundException.class)
-                .hasMessage("Experiment run not found");
-        verifyNoInteractions(aiCorrectionClient);
-    }
-
-    @Test
-    void rejectsCorrectionWhenRunIsNotActive() {
-        var pending = pendingRun(ExperimentCondition.ASSISTED);
-        when(runRepository.findByIdAndParticipantStudentId(pending.getId(), student.getId()))
-                .thenReturn(Optional.of(pending));
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", pending.getId())))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Experiment run is not active");
-        verifyNoInteractions(aiCorrectionClient);
-    }
-
-    @Test
-    void assistedRunLinksTheSessionAndRecordsTheModelVersion() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(runRepository.findByIdAndParticipantStudentId(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(runRepository.findByIdAndParticipantStudentIdForUpdate(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(sessionRepository.save(any(CorrectionSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(aiCorrectionClient.correct("texto", student.getId())).thenReturn(aiResponse("texto corregido", "beto-lora-1.2"));
-
-        var response = correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", assistedRun.getId()));
-
-        assertThat(response.correctedText()).isEqualTo("texto corregido");
-        assertThat(assistedRun.getModelVersion()).isEqualTo("beto-lora-1.2");
-        assertThat(assistedRun.getIncidentCount()).isZero();
-        verify(sessionRepository).save(argThat(session -> session.getExperimentRun() == assistedRun));
-        verifyNoInteractions(incidentRecorder);
-    }
-
-    @Test
-    void differingModelVersionInTheSameRunRecordsAnIncident() {
-        assistedRun.recordModelVersion("beto-lora-1.2");
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(runRepository.findByIdAndParticipantStudentId(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(runRepository.findByIdAndParticipantStudentIdForUpdate(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(sessionRepository.save(any(CorrectionSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(aiCorrectionClient.correct("texto", student.getId())).thenReturn(aiResponse("texto", "beto-lora-1.3"));
-
-        var response = correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", assistedRun.getId()));
-
-        // La correccion se entrega igual; la mezcla de versiones queda auditada en la ejecucion.
-        assertThat(response.correctedText()).isEqualTo("texto");
-        assertThat(assistedRun.getModelVersion()).isEqualTo("beto-lora-1.2");
-        assertThat(assistedRun.getIncidentCount()).isEqualTo(1);
-        assertThat(assistedRun.getFailureReason()).isEqualTo("MODEL_VERSION_CHANGED");
-    }
-
-    @Test
-    void recordsAnIncidentWhenAiFailsDuringAssistedRun() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(runRepository.findByIdAndParticipantStudentId(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(aiCorrectionClient.correct("texto", student.getId()))
-                .thenThrow(new AiServiceException("unavailable", null));
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", assistedRun.getId())))
-                .isInstanceOf(AiServiceException.class);
-        verify(incidentRecorder).record(assistedRun.getId(), "AI_REQUEST_FAILED");
-        // Nada se persiste antes de que la IA responda: no hay sesion a medias ni bloqueo tomado.
-        verify(sessionRepository, never()).save(any());
-        verify(runRepository, never()).findByIdAndParticipantStudentIdForUpdate(any(), any());
-    }
-
-    @Test
-    void emptyAiResponseDuringAssistedRunIsAlsoAnIncident() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(runRepository.findByIdAndParticipantStudentId(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        when(aiCorrectionClient.correct("texto", student.getId())).thenReturn(null);
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", assistedRun.getId())))
-                .isInstanceOf(AiServiceException.class);
-        verify(incidentRecorder).record(assistedRun.getId(), "AI_REQUEST_FAILED");
-    }
-
-    @Test
-    void aiFailureOutsideAnExperimentRecordsNothing() {
+    void aiFailurePersistsNothing() {
         when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
         when(aiCorrectionClient.correct("texto", student.getId()))
                 .thenThrow(new AiServiceException("unavailable", null));
 
         assertThatThrownBy(() -> correctionService.process(student.getId(), new ProcessCorrectionRequest("texto")))
                 .isInstanceOf(AiServiceException.class);
-        verifyNoInteractions(incidentRecorder);
         verify(sessionRepository, never()).save(any());
-    }
-
-    @Test
-    void runCompletedDuringTheAiCallIsRejectedWithoutPersistingAnything() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(runRepository.findByIdAndParticipantStudentId(assistedRun.getId(), student.getId()))
-                .thenReturn(Optional.of(assistedRun));
-        // Entre la lectura sin bloqueo y la fase de escritura, otro hilo completo la ejecucion.
-        when(runRepository.findByIdAndParticipantStudentIdForUpdate(assistedRun.getId(), student.getId()))
-                .thenAnswer(invocation -> {
-                    assistedRun.complete("texto final", 30_000L, UUID.randomUUID(),
-                            Instant.parse("2026-09-14T10:05:00Z"));
-                    return Optional.of(assistedRun);
-                });
-        when(aiCorrectionClient.correct("texto", student.getId())).thenReturn(aiResponse("texto", "beto-lora-1.2"));
-
-        assertThatThrownBy(() -> correctionService.process(
-                student.getId(), new ProcessCorrectionRequest("texto", assistedRun.getId())))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Experiment run is no longer active");
-        verify(sessionRepository, never()).save(any());
-        assertThat(assistedRun.getStatus()).isEqualTo(ExperimentRunStatus.COMPLETED);
-        assertThat(assistedRun.getModelVersion()).isNull();
-        assertThat(assistedRun.getIncidentCount()).isZero();
-        verifyNoInteractions(incidentRecorder);
     }
 
     // ------------------------------------------------------------- feedback
@@ -502,52 +348,6 @@ class CorrectionServiceTests {
     }
 
     @Test
-    void feedbackOfAnExperimentalSessionIsStoredButNotForwardedToTheAi() {
-        var session = new CorrectionSession(student, "el nino iva", assistedRun);
-        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
-        when(wordCorrectionRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
-        var response = correctionService.registerFeedback(
-                student.getId(),
-                session.getId(),
-                new CorrectionFeedbackRequest("el nino iba", true, null));
-
-        assertThat(response.acceptedCorrection()).isTrue();
-        assertThat(response.correctionsCount()).isEqualTo(1);
-        verify(aiCorrectionClient, never()).sendFeedback(any(), anyString(), any(), anyBoolean());
-    }
-
-    @Test
-    void feedbackIsClosedOnceTheExperimentRunIsNoLongerActive() {
-        var session = new CorrectionSession(student, "el nino iva", assistedRun);
-        session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
-        assistedRun.complete("el nino iba", 30_000L, UUID.randomUUID(), Instant.parse("2026-09-14T10:05:00Z"));
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
-        when(sessionRepository.findByIdAndStudentIdForUpdate(session.getId(), student.getId())).thenReturn(Optional.of(session));
-
-        assertThatThrownBy(() -> correctionService.registerFeedback(
-                student.getId(),
-                session.getId(),
-                new CorrectionFeedbackRequest("el nino iba", true, null)))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Feedback is closed for this experiment run");
-        assertThatThrownBy(() -> correctionService.registerFeedback(
-                student.getId(),
-                session.getId(),
-                new CorrectionFeedbackRequest("el nino iba", false, null, "UNDO")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Feedback is closed for this experiment run");
-
-        assertThat(session.getAcceptedCorrection()).isNull();
-        assertThat(session.getFeedbackReason()).isNull();
-        verify(wordCorrectionRepository, never()).deleteByCorrectionSessionId(any());
-        verify(wordCorrectionRepository, never()).saveAll(any());
-        verify(aiCorrectionClient, never()).sendFeedback(any(), anyString(), any(), anyBoolean());
-    }
-
-    @Test
     void undoWithAcceptedTrueAndNoSuggestionIsCoercedToRejection() {
         var session = new CorrectionSession(student, "el nino iva");
         session.complete("el nino iba", 0, "[\"el nino iba\"]", 100L);
@@ -630,28 +430,6 @@ class CorrectionServiceTests {
 
     private AiCorrectionResponse aiResponse(String correctedText, String modelVersion) {
         return new AiCorrectionResponse(student.getId(), correctedText, 50, List.of(correctedText), modelVersion);
-    }
-
-    private ExperimentRun pendingRun(ExperimentCondition condition) {
-        var study = new ResearchStudy("EXP-01", "Teclado predictivo", new Researcher("lab@example.edu", "hash"));
-        study.activate();
-        var protocol = new StudyProtocol(study, 1);
-        protocol.addTask(TaskVariant.TASK_A, "Cuenta tu fin de semana");
-        protocol.addTask(TaskVariant.TASK_B, "Describe tu escuela");
-        protocol.activate();
-        var participant = new StudyParticipant(study, 1);
-        participant.linkStudent(student);
-        var now = Instant.parse("2026-09-14T10:00:00Z");
-        return new ExperimentRun(participant, protocol, protocol.findTask(TaskVariant.TASK_A).orElseThrow(),
-                condition, AccessCode.hash("ABCD2345"), now.plusSeconds(1800), now);
-    }
-
-    private ExperimentRun activeRun(ExperimentCondition condition) {
-        var run = pendingRun(condition);
-        var now = Instant.parse("2026-09-14T10:00:00Z");
-        run.redeem(now);
-        run.start(now);
-        return run;
     }
 
     private CorrectionSession completedSession(Student student, String suggestionsJson) {

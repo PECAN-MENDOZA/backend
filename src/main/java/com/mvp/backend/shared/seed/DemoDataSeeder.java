@@ -409,20 +409,15 @@ public class DemoDataSeeder implements ApplicationRunner {
     }
 
     private void resetDatabase() {
-        jdbcTemplate.update("delete from annotation_imports");
-        jdbcTemplate.update("delete from annotation_items");
-        jdbcTemplate.update("delete from annotation_batches");
-        jdbcTemplate.update("delete from experiment_incidents");
         jdbcTemplate.update("delete from monthly_reports");
         jdbcTemplate.update("delete from word_corrections");
+        // correction_sessions referencia test_responses: se borra antes que las tablas de pruebas.
         jdbcTemplate.update("delete from correction_sessions");
-        jdbcTemplate.update("delete from experiment_runs");
-        jdbcTemplate.update("delete from study_participants");
-        jdbcTemplate.update("delete from protocol_tasks");
-        jdbcTemplate.update("delete from study_protocols");
-        jdbcTemplate.update("delete from research_audit_events");
-        jdbcTemplate.update("delete from research_studies");
-        jdbcTemplate.update("delete from technical_evaluations");
+        jdbcTemplate.update("delete from test_responses");
+        jdbcTemplate.update("delete from test_attempts");
+        jdbcTemplate.update("delete from test_assignments");
+        jdbcTemplate.update("delete from test_sentences");
+        jdbcTemplate.update("delete from sentence_tests");
         jdbcTemplate.update("delete from teacher_student_links");
         jdbcTemplate.update("delete from classrooms");
         jdbcTemplate.update("delete from student_users");

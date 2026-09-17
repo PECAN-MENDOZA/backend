@@ -168,9 +168,10 @@ public class TestResponse {
         return completionKey != null && completionKey.equals(key);
     }
 
+    /** Conteo automatico al terminar; conserva las incidencias registradas mientras la oracion estaba abierta. */
     public void recordAutoErrors(int count, String detailJson) {
         this.autoErrorCount = count;
-        this.autoErrorDetail = detailJson;
+        this.autoErrorDetail = AutoErrorDetail.merge(detailJson, this.autoErrorDetail);
     }
 
     public void appendDetail(String detailJson) {

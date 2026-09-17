@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -83,9 +84,14 @@ public class StudentTestService {
                 .toList();
     }
 
+    /**
+     * El bloqueo pesimista sobre la fila del alumno serializa los arranques concurrentes de ese
+     * mismo alumno; el catch de DataIntegrityViolationException es el ultimo resguardo si, aun asi,
+     * el indice unico parcial de la base de datos rechaza un segundo intento en curso.
+     */
     @Transactional
     public StartedAttempt startAttempt(UUID studentId, UUID testId, StartAttemptRequest request) {
-        Student student = studentRepository.findById(studentId)
+        Student student = studentRepository.findByIdForUpdate(studentId)
                 .orElseThrow(() -> new NotFoundException("Student not found"));
         SentenceTest test = testRepository.findById(testId)
                 .orElseThrow(() -> new NotFoundException("Test not found"));
@@ -103,8 +109,16 @@ public class StudentTestService {
         if (!test.isActive()) {
             throw new ConflictException("Test is not active");
         }
-        TestAttempt attempt = attemptRepository.save(
-                new TestAttempt(test, student, request.appVersion(), backendVersion, clock.instant()));
+        if (attemptRepository.findByTestIdAndStudentIdAndStatus(testId, studentId, AttemptStatus.COMPLETED).isPresent()) {
+            throw new ConflictException("Test already completed");
+        }
+        TestAttempt attempt;
+        try {
+            attempt = attemptRepository.saveAndFlush(
+                    new TestAttempt(test, student, request.appVersion(), backendVersion, clock.instant()));
+        } catch (DataIntegrityViolationException e) {
+            throw new ConflictException("Another test is in progress");
+        }
         return new StartedAttempt(toAttemptResponse(attempt), true);
     }
 

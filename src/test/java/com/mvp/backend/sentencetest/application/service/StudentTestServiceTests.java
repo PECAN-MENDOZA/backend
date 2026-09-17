@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.mvp.backend.sentencetest.application.dto.AssignedTestResponse;
 import com.mvp.backend.sentencetest.application.dto.AttemptResponse;
 import com.mvp.backend.sentencetest.application.dto.FinishSentenceRequest;
 import com.mvp.backend.sentencetest.application.dto.StartAttemptRequest;
@@ -25,6 +26,7 @@ import com.mvp.backend.sentencetest.domain.model.Assistance;
 import com.mvp.backend.sentencetest.domain.model.AttemptStatus;
 import com.mvp.backend.sentencetest.domain.model.SentenceKind;
 import com.mvp.backend.sentencetest.domain.model.SentenceTest;
+import com.mvp.backend.sentencetest.domain.model.TestAssignment;
 import com.mvp.backend.sentencetest.domain.model.TestAttempt;
 import com.mvp.backend.sentencetest.domain.model.TestResponse;
 import com.mvp.backend.sentencetest.domain.model.TestSentence;
@@ -68,12 +70,12 @@ class StudentTestServiceTests {
 
     @Test
     void startAttemptReturnsSlotsWithoutReferenceText() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
         when(testRepository.findById(test.getId())).thenReturn(Optional.of(test));
         when(assignmentRepository.existsByTestIdAndStudentId(test.getId(), student.getId())).thenReturn(true);
         when(attemptRepository.findByStudentIdAndStatus(student.getId(), AttemptStatus.IN_PROGRESS)).thenReturn(Optional.empty());
         when(sentenceRepository.findByTestIdOrderByPositionAsc(test.getId())).thenReturn(sentences);
-        when(attemptRepository.save(any(TestAttempt.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(attemptRepository.saveAndFlush(any(TestAttempt.class))).thenAnswer(inv -> inv.getArgument(0));
         when(responseRepository.countByAttemptIdAndFinishedAtIsNotNull(any())).thenReturn(0L);
 
         StudentTestService.StartedAttempt started =
@@ -90,7 +92,7 @@ class StudentTestServiceTests {
     @Test
     void startAttemptResumesAttemptInProgressOfSameTest() {
         TestAttempt inProgress = new TestAttempt(test, student, "app", "b", now);
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
         when(testRepository.findById(test.getId())).thenReturn(Optional.of(test));
         when(assignmentRepository.existsByTestIdAndStudentId(test.getId(), student.getId())).thenReturn(true);
         when(attemptRepository.findByStudentIdAndStatus(student.getId(), AttemptStatus.IN_PROGRESS)).thenReturn(Optional.of(inProgress));
@@ -110,7 +112,7 @@ class StudentTestServiceTests {
         SentenceTest other = new SentenceTest("PRUEBA-02", "Otra", UUID.randomUUID());
         other.activate(1, now);
         TestAttempt inProgress = new TestAttempt(other, student, "app", "b", now);
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
         when(testRepository.findById(test.getId())).thenReturn(Optional.of(test));
         when(assignmentRepository.existsByTestIdAndStudentId(test.getId(), student.getId())).thenReturn(true);
         when(attemptRepository.findByStudentIdAndStatus(student.getId(), AttemptStatus.IN_PROGRESS)).thenReturn(Optional.of(inProgress));
@@ -121,12 +123,61 @@ class StudentTestServiceTests {
 
     @Test
     void unassignedTestIsForbidden() {
-        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
         when(testRepository.findById(test.getId())).thenReturn(Optional.of(test));
         when(assignmentRepository.existsByTestIdAndStudentId(test.getId(), student.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> service.startAttempt(student.getId(), test.getId(), new StartAttemptRequest("app-1")))
                 .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void startAttemptOnDraftTestIsConflict() {
+        SentenceTest draft = new SentenceTest("PRUEBA-03", "Borrador", UUID.randomUUID());
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
+        when(testRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+        when(assignmentRepository.existsByTestIdAndStudentId(draft.getId(), student.getId())).thenReturn(true);
+        when(attemptRepository.findByStudentIdAndStatus(student.getId(), AttemptStatus.IN_PROGRESS)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.startAttempt(student.getId(), draft.getId(), new StartAttemptRequest("app-1")))
+                .isInstanceOf(ConflictException.class).hasMessageContaining("Test is not active");
+    }
+
+    @Test
+    void startAttemptRejectsSecondAttemptOnACompletedTest() {
+        when(studentRepository.findByIdForUpdate(student.getId())).thenReturn(Optional.of(student));
+        when(testRepository.findById(test.getId())).thenReturn(Optional.of(test));
+        when(assignmentRepository.existsByTestIdAndStudentId(test.getId(), student.getId())).thenReturn(true);
+        when(attemptRepository.findByStudentIdAndStatus(student.getId(), AttemptStatus.IN_PROGRESS)).thenReturn(Optional.empty());
+        when(attemptRepository.findByTestIdAndStudentIdAndStatus(test.getId(), student.getId(), AttemptStatus.COMPLETED))
+                .thenReturn(Optional.of(new TestAttempt(test, student, "app", "b", now)));
+
+        assertThatThrownBy(() -> service.startAttempt(student.getId(), test.getId(), new StartAttemptRequest("app-1")))
+                .isInstanceOf(ConflictException.class).hasMessageContaining("Test already completed");
+    }
+
+    @Test
+    void assignedTestsHidesClosedTestWithoutAttemptAndShowsCompletedWithOne() {
+        SentenceTest closedNoAttempt = new SentenceTest("PRUEBA-04", "Cerrada sin intento", UUID.randomUUID());
+        closedNoAttempt.activate(1, now);
+        closedNoAttempt.close(now);
+        SentenceTest closedWithAttempt = new SentenceTest("PRUEBA-05", "Cerrada con intento", UUID.randomUUID());
+        closedWithAttempt.activate(1, now);
+        closedWithAttempt.close(now);
+        TestAttempt completedAttempt = new TestAttempt(closedWithAttempt, student, "app", "b", now);
+        completedAttempt.complete(now);
+        TestAssignment assignmentNoAttempt = new TestAssignment(closedNoAttempt, student, null, UUID.randomUUID(), now);
+        TestAssignment assignmentWithAttempt = new TestAssignment(closedWithAttempt, student, null, UUID.randomUUID(), now);
+        when(assignmentRepository.findByStudentIdOrderByAssignedAtDesc(student.getId()))
+                .thenReturn(List.of(assignmentNoAttempt, assignmentWithAttempt));
+        when(attemptRepository.findByStudentIdOrderByStartedAtDesc(student.getId())).thenReturn(List.of(completedAttempt));
+        when(sentenceRepository.countByTestId(closedWithAttempt.getId())).thenReturn(1L);
+
+        List<AssignedTestResponse> assigned = service.assignedTests(student.getId());
+
+        assertThat(assigned).hasSize(1);
+        assertThat(assigned.get(0).testId()).isEqualTo(closedWithAttempt.getId());
+        assertThat(assigned.get(0).status()).isEqualTo("COMPLETED");
     }
 
     @Test

@@ -174,6 +174,23 @@ class StudentTestAuthorizationTests {
     }
 
     @Test
+    void completedTestCannotBeStartedAgain() throws Exception {
+        String attemptId = newAttemptId();
+        mockMvc.perform(post("/api/v1/attempts/{id}/responses/{position}/start", attemptId, 1).with(student(studentId)))
+                .andExpect(status().isOk());
+        mockMvc.perform(finishSentence(attemptId, 1, finishBody("El perro corre.", 500, 4000, false, UUID.randomUUID())))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/attempts/{id}/responses/{position}/start", attemptId, 2).with(student(studentId)))
+                .andExpect(status().isOk());
+        mockMvc.perform(finishSentence(attemptId, 2, finishBody("", null, 3000, true, UUID.randomUUID())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attemptStatus").value("COMPLETED"));
+
+        mockMvc.perform(startAttempt(studentId))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
     void attemptInProgressCanBeCancelledAndAnotherStudentCannotTouchIt() throws Exception {
         String attemptId = newAttemptId();
 

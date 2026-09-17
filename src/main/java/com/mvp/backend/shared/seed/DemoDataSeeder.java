@@ -97,7 +97,7 @@ public class DemoDataSeeder implements ApplicationRunner {
 
         insertTeacher(teacherId, teacherUsername, teacherEmail, teacherPhone, institution, teacherCreatedAt);
         UUID classroomId = UUID.randomUUID();
-        insertClassroom(classroomId, teacherId, teacherCreatedAt);
+        insertClassroom(classroomId, teacherId, "3.º B", teacherCreatedAt.plus(30, ChronoUnit.MINUTES));
 
         List<StudentSeed> students = buildStudents();
         for (int index = 0; index < students.size(); index++) {
@@ -158,8 +158,9 @@ public class DemoDataSeeder implements ApplicationRunner {
     private void insertTeacher(UUID id, String username, String email, String phone, String institution, Instant createdAt) {
         jdbcTemplate.update(
                 """
-                insert into teacher_users (id, username, email, phone, institution, password_hash, created_at)
-                values (?, ?, ?, ?, ?, ?, ?)
+                insert into teacher_users
+                    (id, username, email, phone, institution, password_hash, created_by, must_change_password, created_at)
+                values (?, ?, ?, ?, ?, ?, null, false, ?)
                 """,
                 id,
                 username,
@@ -183,11 +184,12 @@ public class DemoDataSeeder implements ApplicationRunner {
                 Timestamp.from(createdAt));
     }
 
-    private void insertClassroom(UUID id, UUID teacherId, Instant createdAt) {
+    private void insertClassroom(UUID id, UUID teacherId, String name, Instant createdAt) {
         jdbcTemplate.update(
-                "insert into classrooms (id, teacher_id, name, created_at) values (?, ?, 'Sin salón', ?)",
+                "insert into classrooms (id, teacher_id, name, created_at) values (?, ?, ?, ?)",
                 id,
                 teacherId,
+                name,
                 Timestamp.from(createdAt));
     }
 
@@ -407,9 +409,20 @@ public class DemoDataSeeder implements ApplicationRunner {
     }
 
     private void resetDatabase() {
+        jdbcTemplate.update("delete from annotation_imports");
+        jdbcTemplate.update("delete from annotation_items");
+        jdbcTemplate.update("delete from annotation_batches");
+        jdbcTemplate.update("delete from experiment_incidents");
         jdbcTemplate.update("delete from monthly_reports");
         jdbcTemplate.update("delete from word_corrections");
         jdbcTemplate.update("delete from correction_sessions");
+        jdbcTemplate.update("delete from experiment_runs");
+        jdbcTemplate.update("delete from study_participants");
+        jdbcTemplate.update("delete from protocol_tasks");
+        jdbcTemplate.update("delete from study_protocols");
+        jdbcTemplate.update("delete from research_audit_events");
+        jdbcTemplate.update("delete from research_studies");
+        jdbcTemplate.update("delete from technical_evaluations");
         jdbcTemplate.update("delete from teacher_student_links");
         jdbcTemplate.update("delete from classrooms");
         jdbcTemplate.update("delete from student_users");

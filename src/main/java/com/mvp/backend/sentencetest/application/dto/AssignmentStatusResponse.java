@@ -14,6 +14,8 @@ public record AssignmentStatusResponse(
         Instant assignedAt,
         UUID attemptId,
         String attemptStatus,
+        Instant startedAt,
+        Instant completedAt,
         Integer currentPosition,
         int sentenceCount,
         boolean excluded) {

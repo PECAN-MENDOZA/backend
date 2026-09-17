@@ -368,13 +368,14 @@ public class ResearchTestService {
         Student student = assignment.getStudent();
         if (attempt == null) {
             return new AssignmentStatusResponse(student.getId(), student.getUsername(), assignment.getClassroomId(),
-                    assignment.getAssignedAt(), null, PENDING, null, sentenceCount, false);
+                    assignment.getAssignedAt(), null, PENDING, null, null, null, sentenceCount, false);
         }
         Integer currentPosition = attempt.isInProgress()
                 ? (int) responseRepository.countByAttemptIdAndFinishedAtIsNotNull(attempt.getId()) + 1
                 : null;
         return new AssignmentStatusResponse(student.getId(), student.getUsername(), assignment.getClassroomId(),
-                assignment.getAssignedAt(), attempt.getId(), attempt.getStatus().name(), currentPosition, sentenceCount,
+                assignment.getAssignedAt(), attempt.getId(), attempt.getStatus().name(), attempt.getStartedAt(),
+                attempt.getCompletedAt(), currentPosition, sentenceCount,
                 attempt.isExcluded());
     }
 

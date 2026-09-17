@@ -105,7 +105,7 @@ GET  /api/v1/research/tests/{testId}/assignments → 200 List<AssignmentStatusRe
 
 `AssignmentStatusResponse.attemptStatus` es `PENDING` (sin intento), `IN_PROGRESS`, `COMPLETED` o `CANCELLED`
 según el intento más reciente de ese alumno en esa prueba; `currentPosition` (oraciones terminadas + 1) solo
-mientras está en curso.
+mientras está en curso; `startedAt`/`completedAt` son los del intento (nulos sin intento).
 
 ### 3.2 Intentos, exclusión y anotación
 

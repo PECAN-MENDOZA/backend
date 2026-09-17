@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public record CreatedStudentAccountResponse(
         UUID linkId,
+        UUID classroomId,
         UUID studentId,
         String username,
         String pin,

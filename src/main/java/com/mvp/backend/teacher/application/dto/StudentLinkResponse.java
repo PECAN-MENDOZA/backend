@@ -5,6 +5,8 @@ import java.util.UUID;
 
 public record StudentLinkResponse(
         UUID id,
+        UUID classroomId,
+        String classroomName,
         UUID studentId,
         String studentUsername,
         String studentRealName,

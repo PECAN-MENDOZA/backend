@@ -107,6 +107,7 @@ class ResearchApiIntegrationTests {
     private String researcherToken;
     private String teacherToken;
     private UUID teacherId;
+    private UUID classroomId;
     private StudentAccount student1;
     private StudentAccount student2;
 
@@ -185,7 +186,8 @@ class ResearchApiIntegrationTests {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.role").value("TEACHER")));
         teacherId = UUID.fromString(teacher.get("userId").asText());
-        classroomRepository.save(new Classroom(teacherRepository.findById(teacherId).orElseThrow(), "3.º B"));
+        classroomId = classroomRepository.save(
+                new Classroom(teacherRepository.findById(teacherId).orElseThrow(), "3.º B")).getId();
         teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login").contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())
@@ -225,10 +227,11 @@ class ResearchApiIntegrationTests {
     }
 
     private StudentAccount createStudent(String realName, String notes) throws Exception {
-        JsonNode created = json(mockMvc.perform(bearer(teacherToken, post("/api/v1/teachers/students/accounts"))
+        JsonNode created = json(mockMvc.perform(bearer(teacherToken,
+                        post("/api/v1/teachers/classrooms/{id}/students", classroomId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(obj("studentRealName", realName, "notes", notes)))
-                .andExpect(status().isCreated()));
+                .andExpect(status().isCreated())).get(0);
         String username = created.get("username").asText();
         String pin = created.get("pin").asText();
         UUID id = UUID.fromString(created.get("studentId").asText());

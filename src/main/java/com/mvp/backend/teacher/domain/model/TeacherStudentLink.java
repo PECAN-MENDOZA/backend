@@ -37,6 +37,10 @@ public class TeacherStudentLink {
     @JoinColumn(name = "student_id", nullable = false)
     private Student student;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "classroom_id", nullable = false)
+    private Classroom classroom;
+
     @Column(name = "encrypted_student_real_name", nullable = false)
     private String encryptedStudentRealName;
 
@@ -52,10 +56,16 @@ public class TeacherStudentLink {
     @Column(name = "last_access_at")
     private Instant lastAccessAt;
 
-    public TeacherStudentLink(Teacher teacher, Student student, String encryptedStudentRealName, String notes) {
+    public TeacherStudentLink(
+            Teacher teacher,
+            Student student,
+            Classroom classroom,
+            String encryptedStudentRealName,
+            String notes) {
         this.id = UUID.randomUUID();
         this.teacher = teacher;
         this.student = student;
+        this.classroom = classroom;
         this.encryptedStudentRealName = encryptedStudentRealName;
         this.notes = notes;
     }
@@ -69,5 +79,24 @@ public class TeacherStudentLink {
 
     public void registerAccess() {
         this.lastAccessAt = Instant.now();
+    }
+
+    public void moveTo(Classroom target) {
+        this.classroom = target;
+    }
+
+    public void updateDetails(String encryptedStudentRealName, String notes) {
+        this.encryptedStudentRealName = encryptedStudentRealName;
+        this.notes = notes;
+    }
+
+    public void deactivate() {
+        if (deletedAt == null) {
+            deletedAt = Instant.now();
+        }
+    }
+
+    public boolean isDeleted() {
+        return deletedAt != null;
     }
 }

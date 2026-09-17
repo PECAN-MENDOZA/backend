@@ -59,10 +59,10 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 
 | Method | Path | Role |
 | --- | --- | --- |
-| `POST` | `/api/v1/auth/teachers/register` | Public |
+| `POST` | `/api/v1/research/teachers` | Researcher |
 | `POST` | `/api/v1/auth/teachers/login` | Public |
 | `POST` | `/api/v1/auth/students/login` | Public |
-| `POST` | `/api/v1/teachers/students/accounts` | Teacher |
+| `POST` | `/api/v1/teachers/classrooms/{id}/students` | Teacher |
 | `GET` | `/api/v1/teachers/students` | Teacher |
 | `POST` | `/api/v1/teachers/students/{id}/reset-pin` | Teacher |
 | `GET` | `/api/v1/students/me` | Student |
@@ -70,12 +70,16 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 | `PATCH` | `/api/v1/corrections/sessions/{id}/feedback` | Student |
 | `GET` | `/api/v1/kpis/students/{id}/summary?month=2026-05` | Teacher |
 
-Teachers create students through `POST /api/v1/teachers/students/accounts`. The backend generates a kid-friendly
-alias (`palabra-NN`, e.g. `tigre-07`) and a 4-digit PIN, inherits the teacher institution, encrypts the real student
-name, and creates the teacher-student link in one transaction. The PIN is returned only by the creation response so the
-teacher can hand it to the student. There is no forced password change: the student logs in with the alias and PIN and
-uses the keyboard directly. If a student forgets the PIN, the teacher resets it via
-`POST /api/v1/teachers/students/{id}/reset-pin`, which returns a new PIN once.
+Teachers create students inside one of their classrooms through `POST /api/v1/teachers/classrooms/{id}/students`.
+The backend generates a kid-friendly alias (`palabra-NN`, e.g. `tigre-07`) and a 4-digit PIN, inherits the teacher
+institution, encrypts the real student name, and creates the teacher-student link in one transaction. The PIN is
+returned only by the creation response so the teacher can hand it to the student. There is no forced password
+change: the student logs in with the alias and PIN and uses the keyboard directly. If a student forgets the PIN,
+the teacher resets it via `POST /api/v1/teachers/students/{id}/reset-pin`, which returns a new PIN once.
+
+Teacher accounts have no public self-registration: a researcher creates them via `POST /api/v1/research/teachers`,
+which returns a temporary password once. See [docs/research-api.md](docs/research-api.md) for the full endpoint
+table, roles, and the research workflow.
 
 ## Verify
 

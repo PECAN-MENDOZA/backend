@@ -13,7 +13,7 @@ investigación contiene identidad de alumnos, datos del docente ni códigos de a
 | Rol | Cómo se obtiene | Puede | No puede |
 |---|---|---|---|
 | `RESEARCHER` | Cuenta creada por variables de entorno (sección 2) + `POST /api/v1/auth/staff/login` | `/api/v1/research/**` | `/api/v1/experiments/**`, `/api/v1/corrections/**`, `/api/v1/teachers/**` (403) |
-| `TEACHER` | Registro/login existentes (`/api/v1/auth/teachers/*`; `staff/login` también acepta docentes) | Lo de siempre | `/api/v1/research/**` (403) |
+| `TEACHER` | Alta por un investigador + `POST /api/v1/auth/teachers/login`; `staff/login` también acepta docentes | Gestión de sus salones y alumnos | `/api/v1/research/**` (403) |
 | `STUDENT` | `POST /api/v1/auth/students/login` con alias + PIN | `/api/v1/experiments/**`, `/api/v1/corrections/**` | `/api/v1/research/**` (403) |
 
 Sin token: 401. Un estudio ajeno o inexistente responde siempre `404 {"message":"Study not found"}`, de modo que
@@ -40,7 +40,30 @@ POST /api/v1/auth/staff/login
 → 200 {"userId":"…","token":"<JWT>","expiresAt":"…","role":"RESEARCHER"}
 ```
 
-Todas las llamadas siguientes llevan `Authorization: Bearer <JWT>`.
+Las llamadas del investigador llevan `Authorization: Bearer <JWT>`.
+
+### 2.1 Docentes y salones
+
+El registro público de docentes ya no existe. Un investigador crea la cuenta, entrega la contraseña temporal una
+sola vez y el docente debe cambiarla. Los alumnos se crean siempre dentro de un salón.
+
+| Método | Ruta | Rol | Cuerpo | Respuesta |
+|---|---|---|---|---|
+| `POST` | `/api/v1/research/teachers` | `RESEARCHER` | `{fullName, email, institution}` | `201 CreatedTeacherResponse` con contraseña temporal |
+| `GET` | `/api/v1/research/teachers` | `RESEARCHER` | — | `200 List<TeacherSummaryResponse>` |
+| `POST` | `/api/v1/research/teachers/{teacherId}/reset-password` | `RESEARCHER` | — | `200 TemporaryPasswordResponse` |
+| `GET` | `/api/v1/research/classrooms` | `RESEARCHER` | — | `200 List<ClassroomDirectoryResponse>` sin nombres reales de alumnos |
+| `POST` | `/api/v1/auth/teachers/change-password` | `TEACHER` | `{currentPassword, newPassword}` | `204` |
+| `POST` | `/api/v1/teachers/classrooms` | `TEACHER` | `{name}` | `201 ClassroomResponse` |
+| `GET` | `/api/v1/teachers/classrooms` | `TEACHER` | — | `200 List<ClassroomResponse>` |
+| `PATCH` | `/api/v1/teachers/classrooms/{classroomId}` | `TEACHER` | `{name?, archived?}` | `200 ClassroomResponse` |
+| `GET` | `/api/v1/teachers/classrooms/{classroomId}/students` | `TEACHER` | — | `200 List<StudentLinkResponse>` |
+| `POST` | `/api/v1/teachers/classrooms/{classroomId}/students` | `TEACHER` | `{studentRealName?, notes?, count?}` | `201 List<CreatedStudentAccountResponse>` |
+| `GET` | `/api/v1/teachers/students` | `TEACHER` | — | `200 List<StudentLinkResponse>` |
+| `PATCH` | `/api/v1/teachers/students/{studentId}` | `TEACHER` | `{studentRealName, notes}` | `200 StudentLinkResponse` |
+| `PATCH` | `/api/v1/teachers/students/{studentId}/classroom` | `TEACHER` | `{classroomId}` | `200 StudentLinkResponse` |
+| `POST` | `/api/v1/teachers/students/{studentId}/reset-pin` | `TEACHER` | — | `200 ResetStudentPinResponse` |
+| `POST` | `/api/v1/teachers/students/{studentId}/deactivate` | `TEACHER` | — | `204` |
 
 ## 3. Orden de llamadas
 

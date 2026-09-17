@@ -7,10 +7,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.mvp.backend.auth.application.dto.AuthResponse;
+import com.mvp.backend.auth.application.dto.ChangePasswordRequest;
 import com.mvp.backend.auth.application.dto.StaffLoginRequest;
 import com.mvp.backend.auth.application.dto.StudentLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
-import com.mvp.backend.auth.application.dto.TeacherRegistrationRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.shared.exception.BusinessException;
@@ -51,33 +51,12 @@ public class AuthService {
         return tokenService.issue(student.getId(), UserRole.STUDENT);
     }
 
-    @Transactional
-    public AuthResponse registerTeacher(TeacherRegistrationRequest request) {
-        if (teacherRepository.existsByUsername(request.username())) {
-            throw new BusinessException("Teacher username is already in use");
-        }
-        // El mismo mensaje generico si el correo ya es de un docente o de un investigador: el registro
-        // publico no debe servir de oraculo sobre las cuentas de investigacion.
-        if (teacherRepository.existsByEmail(request.email())
-                || researcherRepository.findByEmail(request.email()).isPresent()) {
-            throw new BusinessException("Teacher email is already in use");
-        }
-        var teacher = new Teacher(
-                request.username(),
-                request.email(),
-                request.phone(),
-                request.institution(),
-                passwordEncoder.encode(request.password()));
-        teacherRepository.save(teacher);
-        return tokenService.issue(teacher.getId(), UserRole.TEACHER);
-    }
-
     @Transactional(readOnly = true)
     public AuthResponse loginTeacher(TeacherLoginRequest request) {
         var teacher = teacherRepository.findByEmail(request.email())
                 .orElseThrow(() -> new UnauthorizedException("Invalid teacher credentials"));
         verifyPassword(request.password(), teacher.getPasswordHash(), "Invalid teacher credentials");
-        return tokenService.issue(teacher.getId(), UserRole.TEACHER);
+        return tokenService.issue(teacher.getId(), UserRole.TEACHER, teacher.isMustChangePassword());
     }
 
     /**
@@ -96,9 +75,21 @@ public class AuthService {
             return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER);
         }
         if (teacher.isPresent() && teacherMatches) {
-            return tokenService.issue(teacher.get().getId(), UserRole.TEACHER);
+            return tokenService.issue(
+                    teacher.get().getId(), UserRole.TEACHER, teacher.get().isMustChangePassword());
         }
         throw new UnauthorizedException("Invalid staff credentials");
+    }
+
+    @Transactional
+    public void changeTeacherPassword(UUID teacherId, ChangePasswordRequest request) {
+        Teacher teacher = teacherRepository.findById(teacherId)
+                .orElseThrow(() -> new UnauthorizedException("Invalid teacher credentials"));
+        verifyPassword(request.currentPassword(), teacher.getPasswordHash(), "Invalid teacher credentials");
+        if (request.currentPassword().equals(request.newPassword())) {
+            throw new BusinessException("New password must be different");
+        }
+        teacher.changePassword(passwordEncoder.encode(request.newPassword()));
     }
 
     private void verifyPassword(String rawPassword, String passwordHash, String message) {

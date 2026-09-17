@@ -9,5 +9,6 @@ public record AuthResponse(
         UUID userId,
         String token,
         Instant expiresAt,
-        UserRole role) {
+        UserRole role,
+        boolean mustChangePassword) {
 }

@@ -42,6 +42,9 @@ import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
 import com.mvp.backend.experiment.domain.model.AccessCode;
 import com.mvp.backend.research.domain.repository.ResearchAuditEventRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
+import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -89,6 +92,10 @@ class ResearchApiIntegrationTests {
     private ObjectMapper objectMapper;
     @Autowired
     private ResearchAuditEventRepository auditRepository;
+    @Autowired
+    private TeacherRepository teacherRepository;
+    @Autowired
+    private ClassroomRepository classroomRepository;
     @MockitoBean
     private AiCorrectionClient aiClient;
 
@@ -100,6 +107,7 @@ class ResearchApiIntegrationTests {
     private String researcherToken;
     private String teacherToken;
     private UUID teacherId;
+    private UUID classroomId;
     private StudentAccount student1;
     private StudentAccount student2;
 
@@ -170,22 +178,38 @@ class ResearchApiIntegrationTests {
                         .content(obj("email", RESEARCHER_EMAIL, "password", "otra-clave")))
                 .andExpect(status().isUnauthorized());
 
-        // Teacher registration and both login routes keep working (compatibility).
-        JsonNode teacher = json(mockMvc.perform(post("/api/v1/auth/teachers/register")
+        // El investigador crea al docente y la contrasena temporal cambia antes del uso regular.
+        JsonNode teacher = json(mockMvc.perform(bearer(researcherToken, post(RESEARCH + "/teachers"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(obj("username", teacherUsername, "email", teacherEmail, "phone", "999000111",
-                                "institution", teacherInstitution, "password", "DocentePass123")))
+                        .content(obj("fullName", "Docente E2E", "email", teacherEmail,
+                                "institution", teacherInstitution)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.role").value("TEACHER")));
-        teacherId = UUID.fromString(teacher.get("userId").asText());
-        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login").contentType(MediaType.APPLICATION_JSON)
+                .andExpect(jsonPath("$.username").value(teacherUsername)));
+        teacherId = UUID.fromString(teacher.get("id").asText());
+        String temporaryPassword = teacher.get("temporaryPassword").asText();
+        classroomId = classroomRepository.save(
+                new Classroom(teacherRepository.findById(teacherId).orElseThrow(), "3.º B")).getId();
+        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("email", teacherEmail, "password", temporaryPassword)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(true))).get("token").asText();
+        mockMvc.perform(bearer(teacherToken, post("/api/v1/auth/teachers/change-password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("currentPassword", temporaryPassword, "newPassword", "DocentePass123")))
+                .andExpect(status().isNoContent());
+        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("TEACHER"))).get("token").asText();
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(false))).get("token").asText();
         mockMvc.perform(post("/api/v1/auth/staff/login").contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("TEACHER"));
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(false));
 
         // Two students created by the teacher (real name and notes stay on the teacher side only).
         student1 = createStudent("Nombre Real Alumno Uno " + suffix, "Nota confidencial uno " + suffix);
@@ -217,10 +241,11 @@ class ResearchApiIntegrationTests {
     }
 
     private StudentAccount createStudent(String realName, String notes) throws Exception {
-        JsonNode created = json(mockMvc.perform(bearer(teacherToken, post("/api/v1/teachers/students/accounts"))
+        JsonNode created = json(mockMvc.perform(bearer(teacherToken,
+                        post("/api/v1/teachers/classrooms/{id}/students", classroomId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(obj("studentRealName", realName, "notes", notes)))
-                .andExpect(status().isCreated()));
+                .andExpect(status().isCreated())).get(0);
         String username = created.get("username").asText();
         String pin = created.get("pin").asText();
         UUID id = UUID.fromString(created.get("studentId").asText());

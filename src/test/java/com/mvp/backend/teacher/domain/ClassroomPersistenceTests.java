@@ -60,6 +60,21 @@ class ClassroomPersistenceTests {
     }
 
     @Test
+    void activeClassroomsAreListedBeforeArchivedOnesRegardlessOfCreationOrder() {
+        Teacher teacher = teacherRepository.save(newTeacher());
+        // El salon archivado se crea primero (createdAt mas antiguo) para probar que el orden no depende
+        // de como cada motor ordena los NULL de archivedAt (H2 los pone primero, Postgres al final).
+        Classroom archived = classroomRepository.save(new Classroom(teacher, "Archivado"));
+        archived.archive();
+        classroomRepository.save(archived);
+        Classroom active = classroomRepository.save(new Classroom(teacher, "Activo"));
+
+        var ordered = classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacher.getId());
+
+        assertThat(ordered).extracting(Classroom::getName).containsExactly("Activo", "Archivado");
+    }
+
+    @Test
     void teacherCreatedByResearcherMustChangeTemporaryPassword() {
         UUID researcherId = UUID.randomUUID();
         Teacher teacher = teacherRepository.save(

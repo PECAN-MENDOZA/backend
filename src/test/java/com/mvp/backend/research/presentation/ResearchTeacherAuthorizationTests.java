@@ -121,7 +121,7 @@ class ResearchTeacherAuthorizationTests {
         mockMvc.perform(post("/api/v1/auth/teachers/change-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(request))
-                .andExpect(status().is4xxClientError());
+                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(post("/api/v1/auth/teachers/change-password")
                         .with(researcher())

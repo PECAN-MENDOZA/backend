@@ -20,6 +20,7 @@ public interface TestAttemptRepository extends JpaRepository<TestAttempt, UUID> 
     List<TestAttempt> findByTestIdOrderByStartedAtAsc(UUID testId);
     List<TestAttempt> findByStudentIdOrderByStartedAtDesc(UUID studentId);
     boolean existsByStudentIdAndStatus(UUID studentId, AttemptStatus status);
+    long countByTestIdAndStatus(UUID testId, AttemptStatus status);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from TestAttempt a where a.id = :id")
     Optional<TestAttempt> findByIdForUpdate(@Param("id") UUID id);

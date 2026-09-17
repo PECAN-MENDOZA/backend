@@ -11,4 +11,5 @@ public interface TestAssignmentRepository extends JpaRepository<TestAssignment, 
     List<TestAssignment> findByStudentIdOrderByAssignedAtDesc(UUID studentId);
     List<TestAssignment> findByTestIdOrderByAssignedAtAsc(UUID testId);
     boolean existsByTestIdAndStudentId(UUID testId, UUID studentId);
+    long countByTestId(UUID testId);
 }

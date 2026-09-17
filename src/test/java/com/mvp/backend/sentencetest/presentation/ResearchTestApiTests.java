@@ -8,10 +8,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -333,6 +337,53 @@ class ResearchTestApiTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.completedCount").value(1))
                 .andExpect(jsonPath("$.assignedCount").value(1));
+    }
+
+    @Test
+    void resultsAndCsvExportShareTheDatasetHash() throws Exception {
+        String body = mockMvc.perform(get("/api/v1/research/tests/" + otherTestId + "/results").with(researcher()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("OTRA-" + suffix))
+                .andExpect(jsonPath("$.designManual").value(true))
+                .andExpect(jsonPath("$.sampleInsufficient").value(true))
+                .andExpect(jsonPath("$.minSample").value(8))
+                .andExpect(jsonPath("$.incomplete").value(true))
+                .andExpect(jsonPath("$.sample.completed").value(1))
+                .andExpect(jsonPath("$.sample.unannotatedFree").value(1))
+                .andExpect(jsonPath("$.conditions.ASSISTED.participants").value(1))
+                .andExpect(jsonPath("$.conditions.ASSISTED.errorsPer100Words.n").value(1))
+                .andExpect(jsonPath("$.conditions.ASSISTED.errorsPer100Words.mean").value(100.0 / 3))
+                .andExpect(jsonPath("$.conditions.ASSISTED.acceptanceRate.offered").value(0))
+                .andExpect(jsonPath("$.conditions.UNASSISTED.participants").value(1))
+                .andExpect(jsonPath("$.paired.errorsPer100Words.n").value(0))
+                .andExpect(jsonPath("$.sentences.length()").value(2))
+                .andExpect(jsonPath("$.sentences[0].n").value(1))
+                .andExpect(jsonPath("$.provenance.appVersions[0]").value("app-1"))
+                .andExpect(content().string(not(containsString("Nombre Real Secreto"))))
+                .andReturn().getResponse().getContentAsString();
+        String sha = objectMapper.readTree(body).get("datasetSha256").asString();
+
+        byte[] csv = mockMvc.perform(get("/api/v1/research/tests/" + otherTestId + "/export.csv").with(researcher()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "text/csv;charset=UTF-8"))
+                .andExpect(header().string("Content-Disposition",
+                        "attachment; filename=\"test-OTRA-" + suffix + "-responses.csv\""))
+                .andExpect(header().string("X-Dataset-Sha256", sha))
+                .andReturn().getResponse().getContentAsByteArray();
+        String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(csv));
+        assertThat(digest).isEqualTo(sha);
+        String text = new String(csv, StandardCharsets.UTF_8);
+        assertThat(text).startsWith("﻿test_code,student_username,attempt_id,");
+        assertThat(text).contains("OTRA-" + suffix + ",tigre-" + suffix + "," + otherAttemptId
+                + ",1,DICTATED,ASSISTED,El perro corre.,El pero corre.,false,3,1,AUTO,3900,4000,0,0,0,0,,app-1,false\r\n");
+        assertThat(text).contains(",2,FREE,UNASSISTED,Escribe sobre tu mascota,Mi gato duerme mucho,false,4,,PENDING,"
+                + "8800,9000,2,1,0,0,,app-1,false\r\n");
+        assertThat(text).doesNotContain("Nombre Real Secreto");
+
+        mockMvc.perform(get("/api/v1/research/tests/" + UUID.randomUUID() + "/results").with(researcher()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/research/tests/" + otherTestId + "/export.csv").with(teacher()))
+                .andExpect(status().isForbidden());
     }
 
     private UUID activeTest() {

@@ -3,7 +3,10 @@ package com.mvp.backend.sentencetest.presentation;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -23,22 +26,29 @@ import com.mvp.backend.sentencetest.application.dto.AttemptDetailResponse;
 import com.mvp.backend.sentencetest.application.dto.CreateTestRequest;
 import com.mvp.backend.sentencetest.application.dto.ExcludeAttemptRequest;
 import com.mvp.backend.sentencetest.application.dto.TestDetailResponse;
+import com.mvp.backend.sentencetest.application.dto.TestResultsResponse;
 import com.mvp.backend.sentencetest.application.dto.TestSummaryResponse;
 import com.mvp.backend.sentencetest.application.dto.UpdateTestRequest;
 import com.mvp.backend.sentencetest.application.service.ResearchTestService;
+import com.mvp.backend.sentencetest.application.service.TestExportCsv;
+import com.mvp.backend.sentencetest.application.service.TestResultsService;
 
 import jakarta.validation.Valid;
 
-/** API del investigador: pruebas, asignacion, intentos, exclusion y anotacion. */
+/** API del investigador: pruebas, asignacion, intentos, exclusion, anotacion, resultados y exportacion. */
 @RestController
 @RequestMapping("/api/v1/research")
 @PreAuthorize("hasRole('RESEARCHER')")
 public class ResearchTestController {
 
-    private final ResearchTestService service;
+    private static final MediaType TEXT_CSV_UTF8 = MediaType.parseMediaType("text/csv; charset=UTF-8");
 
-    public ResearchTestController(ResearchTestService service) {
+    private final ResearchTestService service;
+    private final TestResultsService resultsService;
+
+    public ResearchTestController(ResearchTestService service, TestResultsService results) {
         this.service = service;
+        this.resultsService = results;
     }
 
     @PostMapping("/tests")
@@ -100,6 +110,22 @@ public class ResearchTestController {
             @AuthenticationPrincipal Jwt jwt, @PathVariable UUID responseId,
             @Valid @RequestBody AnnotateResponseRequest request) {
         return service.annotate(researcherId(jwt), responseId, request.errorCount());
+    }
+
+    @GetMapping("/tests/{testId}/results")
+    public TestResultsResponse results(@PathVariable UUID testId) {
+        return resultsService.results(testId);
+    }
+
+    /** CSV de respuestas (UTF-8 con BOM); X-Dataset-Sha256 coincide con datasetSha256 del JSON de resultados. */
+    @GetMapping("/tests/{testId}/export.csv")
+    public ResponseEntity<byte[]> exportCsv(@PathVariable UUID testId) {
+        TestResultsService.CsvExport export = resultsService.exportCsv(testId);
+        return ResponseEntity.ok()
+                .contentType(TEXT_CSV_UTF8)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + TestExportCsv.fileName(export.code()) + "\"")
+                .header("X-Dataset-Sha256", export.sha256())
+                .body(export.bytes());
     }
 
     private static UUID researcherId(Jwt jwt) {

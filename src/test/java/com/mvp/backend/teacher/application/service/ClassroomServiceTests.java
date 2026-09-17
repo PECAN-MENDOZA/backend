@@ -94,6 +94,19 @@ class ClassroomServiceTests {
     }
 
     @Test
+    void rejectsClassroomNameThatIsBlankAfterTrimming() {
+        Classroom classroom = new Classroom(teacher, "3.º B");
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+
+        assertThatThrownBy(() -> service.updateClassroom(
+                teacherId, classroom.getId(), new UpdateClassroomRequest("   ", null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Classroom name cannot be blank");
+
+        assertThat(classroom.getName()).isEqualTo("3.º B");
+    }
+
+    @Test
     void createsOneNamedStudentInsideClassroom() {
         Classroom classroom = new Classroom(teacher, "3.º B");
         when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
@@ -129,6 +142,19 @@ class ClassroomServiceTests {
         assertThat(created).hasSize(3);
         assertThat(created).extracting(c -> c.studentRealName()).containsOnly("");
         verify(linkRepository, times(3)).save(any(TeacherStudentLink.class));
+    }
+
+    @Test
+    void rejectsStudentNameAndCountTogether() {
+        Classroom classroom = new Classroom(teacher, "3.º B");
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+
+        assertThatThrownBy(() -> service.createStudents(teacherId, classroom.getId(),
+                new CreateClassroomStudentsRequest("Ana", null, 2)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Provide either studentRealName or count, not both");
+
+        verify(linkRepository, never()).save(any());
     }
 
     @Test

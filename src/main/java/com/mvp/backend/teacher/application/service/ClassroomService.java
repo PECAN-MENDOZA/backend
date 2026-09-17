@@ -81,6 +81,9 @@ public class ClassroomService {
         Classroom classroom = ownedClassroom(teacherId, classroomId);
         if (request.name() != null) {
             String name = request.name().trim();
+            if (name.isEmpty()) {
+                throw new BusinessException("Classroom name cannot be blank");
+            }
             if (!name.equals(classroom.getName()) && classroomRepository.existsByTeacherIdAndName(teacherId, name)) {
                 throw new ConflictException("Classroom name is already in use");
             }
@@ -111,6 +114,9 @@ public class ClassroomService {
         Classroom classroom = ownedClassroom(teacherId, classroomId);
         if (classroom.isArchived()) {
             throw new BusinessException("Cannot add students to an archived classroom");
+        }
+        if (request.studentRealName() != null && request.count() != null) {
+            throw new BusinessException("Provide either studentRealName or count, not both");
         }
         boolean named = request.studentRealName() != null && !request.studentRealName().isBlank();
         if (!named && request.count() == null) {

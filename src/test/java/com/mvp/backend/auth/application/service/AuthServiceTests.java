@@ -2,10 +2,8 @@ package com.mvp.backend.auth.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,13 +20,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.mvp.backend.auth.application.dto.AuthResponse;
+import com.mvp.backend.auth.application.dto.ChangePasswordRequest;
 import com.mvp.backend.auth.application.dto.StaffLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
-import com.mvp.backend.auth.application.dto.TeacherRegistrationRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
-import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.UnauthorizedException;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 import com.mvp.backend.teacher.domain.model.Teacher;
@@ -62,40 +59,24 @@ class AuthServiceTests {
     }
 
     @Test
-    void registersTeacherWithEncodedPassword() {
-        var request = new TeacherRegistrationRequest("teacher_01", "teacher@upc.edu", null, "UPC", "Password123");
-        when(passwordEncoder.encode("Password123")).thenReturn("encoded-password");
-        when(teacherRepository.save(any(Teacher.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(tokenService.issue(any(UUID.class), any(UserRole.class)))
-                .thenAnswer(invocation -> new AuthResponse(
-                        invocation.getArgument(0),
-                        "token",
-                        Instant.now().plusSeconds(3600),
-                        invocation.getArgument(1)));
-
-        AuthResponse response = authService.registerTeacher(request);
-
-        assertThat(response.role()).isEqualTo(UserRole.TEACHER);
-        verify(passwordEncoder).encode("Password123");
-        verify(teacherRepository).save(any(Teacher.class));
-    }
-
-    @Test
     void logsTeacherInUsingEmail() {
-        var teacher = new Teacher("teacher_01", "teacher@upc.edu", null, "UPC", "encoded-password");
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "encoded-password", UUID.randomUUID(), true);
         when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(true);
-        when(tokenService.issue(teacher.getId(), UserRole.TEACHER))
+        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true))
                 .thenReturn(new AuthResponse(
                         teacher.getId(),
                         "token",
                         Instant.now().plusSeconds(3600),
-                        UserRole.TEACHER));
+                        UserRole.TEACHER,
+                        true));
 
         AuthResponse response = authService.loginTeacher(new TeacherLoginRequest("teacher@upc.edu", "Password123"));
 
         assertThat(response.userId()).isEqualTo(teacher.getId());
         assertThat(response.token()).isEqualTo("token");
+        assertThat(response.mustChangePassword()).isTrue();
     }
 
     @Test
@@ -106,7 +87,7 @@ class AuthServiceTests {
         when(passwordEncoder.matches("Research123", "encoded-password")).thenReturn(true);
         when(tokenService.issue(researcher.getId(), UserRole.RESEARCHER))
                 .thenReturn(new AuthResponse(
-                        researcher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.RESEARCHER));
+                        researcher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.RESEARCHER, false));
 
         AuthResponse response = authService.loginStaff(
                 new StaffLoginRequest("authors@tesis.local", "Research123"));
@@ -129,7 +110,8 @@ class AuthServiceTests {
     @Test
     void staffLoginAlwaysRunsExactlyTwoComparisonsWhateverTheAccountType() {
         var researcher = new Researcher("authors@tesis.local", "researcher-hash");
-        var teacher = new Teacher("teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash");
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true);
         when(researcherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.of(researcher));
         when(teacherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.empty());
         when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
@@ -151,32 +133,48 @@ class AuthServiceTests {
 
     @Test
     void teacherWithTheRightPasswordLogsInThroughStaffLoginWithTwoComparisons() {
-        var teacher = new Teacher("teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash");
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true);
         when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
         when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "teacher-hash")).thenReturn(true);
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(false); // dummy researcher side
-        when(tokenService.issue(teacher.getId(), UserRole.TEACHER))
-                .thenReturn(new AuthResponse(teacher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.TEACHER));
+        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true))
+                .thenReturn(new AuthResponse(
+                        teacher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.TEACHER, true));
 
         AuthResponse response = authService.loginStaff(new StaffLoginRequest("teacher@upc.edu", "Password123"));
 
         assertThat(response.role()).isEqualTo(UserRole.TEACHER);
+        assertThat(response.mustChangePassword()).isTrue();
         verify(passwordEncoder, times(2)).matches(eq("Password123"), anyString());
     }
 
     @Test
-    void teacherRegistrationCannotReuseAResearcherEmail() {
-        var request = new TeacherRegistrationRequest("teacher_02", "authors@tesis.local", null, "UPC", "Password123");
-        when(teacherRepository.existsByUsername("teacher_02")).thenReturn(false);
-        when(teacherRepository.existsByEmail("authors@tesis.local")).thenReturn(false);
-        when(researcherRepository.findByEmail("authors@tesis.local"))
-                .thenReturn(Optional.of(new Researcher("authors@tesis.local", "hash")));
+    void changePasswordClearsMustChangeFlag() {
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true);
+        when(teacherRepository.findById(teacher.getId())).thenReturn(Optional.of(teacher));
+        when(passwordEncoder.matches("Temporary23", "temporary-hash")).thenReturn(true);
+        when(passwordEncoder.encode("Permanent45")).thenReturn("permanent-hash");
 
-        assertThatThrownBy(() -> authService.registerTeacher(request))
-                .isInstanceOf(BusinessException.class)
-                // Same generic message as a duplicate teacher email: no oracle for researcher accounts.
-                .hasMessage("Teacher email is already in use");
-        verify(teacherRepository, never()).save(any());
+        authService.changeTeacherPassword(
+                teacher.getId(), new ChangePasswordRequest("Temporary23", "Permanent45"));
+
+        assertThat(teacher.isMustChangePassword()).isFalse();
+        assertThat(teacher.getPasswordHash()).isEqualTo("permanent-hash");
+    }
+
+    @Test
+    void changePasswordRejectsWrongCurrent() {
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true);
+        when(teacherRepository.findById(teacher.getId())).thenReturn(Optional.of(teacher));
+        when(passwordEncoder.matches("Wrong123", "temporary-hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.changeTeacherPassword(
+                teacher.getId(), new ChangePasswordRequest("Wrong123", "Permanent45")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid teacher credentials");
     }
 }

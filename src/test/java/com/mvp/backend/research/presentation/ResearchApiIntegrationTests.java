@@ -178,24 +178,38 @@ class ResearchApiIntegrationTests {
                         .content(obj("email", RESEARCHER_EMAIL, "password", "otra-clave")))
                 .andExpect(status().isUnauthorized());
 
-        // Teacher registration and both login routes keep working (compatibility).
-        JsonNode teacher = json(mockMvc.perform(post("/api/v1/auth/teachers/register")
+        // El investigador crea al docente y la contrasena temporal cambia antes del uso regular.
+        JsonNode teacher = json(mockMvc.perform(bearer(researcherToken, post(RESEARCH + "/teachers"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(obj("username", teacherUsername, "email", teacherEmail, "phone", "999000111",
-                                "institution", teacherInstitution, "password", "DocentePass123")))
+                        .content(obj("fullName", "Docente E2E", "email", teacherEmail,
+                                "institution", teacherInstitution)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.role").value("TEACHER")));
-        teacherId = UUID.fromString(teacher.get("userId").asText());
+                .andExpect(jsonPath("$.username").value(teacherUsername)));
+        teacherId = UUID.fromString(teacher.get("id").asText());
+        String temporaryPassword = teacher.get("temporaryPassword").asText();
         classroomId = classroomRepository.save(
                 new Classroom(teacherRepository.findById(teacherId).orElseThrow(), "3.º B")).getId();
-        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login").contentType(MediaType.APPLICATION_JSON)
+        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("email", teacherEmail, "password", temporaryPassword)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(true))).get("token").asText();
+        mockMvc.perform(bearer(teacherToken, post("/api/v1/auth/teachers/change-password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(obj("currentPassword", temporaryPassword, "newPassword", "DocentePass123")))
+                .andExpect(status().isNoContent());
+        teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("TEACHER"))).get("token").asText();
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(false))).get("token").asText();
         mockMvc.perform(post("/api/v1/auth/staff/login").contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.role").value("TEACHER"));
+                .andExpect(jsonPath("$.role").value("TEACHER"))
+                .andExpect(jsonPath("$.mustChangePassword").value(false));
 
         // Two students created by the teacher (real name and notes stay on the teacher side only).
         student1 = createStudent("Nombre Real Alumno Uno " + suffix, "Nota confidencial uno " + suffix);

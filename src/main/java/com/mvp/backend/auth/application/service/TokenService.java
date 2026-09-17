@@ -24,6 +24,10 @@ public class TokenService {
     }
 
     public AuthResponse issue(UUID userId, UserRole role) {
+        return issue(userId, role, false);
+    }
+
+    public AuthResponse issue(UUID userId, UserRole role, boolean mustChangePassword) {
         Instant issuedAt = Instant.now();
         Instant expiresAt = issuedAt.plus(properties.tokenTtl());
         JwtClaimsSet claims = JwtClaimsSet.builder()
@@ -34,6 +38,6 @@ public class TokenService {
                 .claim("role", role.name())
                 .build();
         String token = jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
-        return new AuthResponse(userId, token, expiresAt, role);
+        return new AuthResponse(userId, token, expiresAt, role, mustChangePassword);
     }
 }

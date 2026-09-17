@@ -80,6 +80,16 @@ class SentenceTestDomainTests {
         assertThat(other.getDurationFromFirstKeyMs()).isNull();
     }
 
+    @Test
+    void openSentenceOfACancelledAttemptNoLongerAcceptsCorrections() {
+        TestAttempt attempt = attempt();
+        TestSentence sentence = new TestSentence(attempt.getTest(), 1, SentenceKind.DICTATED, "El perro corre.", Assistance.ASSISTED);
+        TestResponse response = new TestResponse(attempt, sentence, now);
+        assertThat(response.acceptsCorrections()).isTrue();
+        attempt.cancel(AttemptCancelReason.INTERRUPTED, now);
+        assertThat(response.acceptsCorrections()).isFalse();
+    }
+
     private TestAttempt attempt() {
         SentenceTest test = new SentenceTest("PRUEBA-01", "Dictado 1", UUID.randomUUID());
         test.activate(2, now);

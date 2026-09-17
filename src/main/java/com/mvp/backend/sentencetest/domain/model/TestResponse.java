@@ -124,8 +124,12 @@ public class TestResponse {
         return finishedAt != null;
     }
 
+    /**
+     * Solo una oracion abierta de un intento en curso admite correcciones: cancelar el intento deja
+     * la oracion sin terminar, y su id no debe servir para colarse en un intento posterior.
+     */
     public boolean acceptsCorrections() {
-        return isStarted() && !isFinished() && sentence.isAssisted();
+        return isStarted() && !isFinished() && sentence.isAssisted() && attempt.isInProgress();
     }
 
     /**

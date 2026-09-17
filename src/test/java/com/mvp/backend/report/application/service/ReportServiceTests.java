@@ -27,6 +27,7 @@ import com.mvp.backend.report.domain.repository.MonthlyReportRepository;
 import com.mvp.backend.report.infrastructure.pdf.SimplePdfGenerator;
 import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.model.Student;
+import com.mvp.backend.teacher.domain.model.Classroom;
 import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
@@ -148,7 +149,8 @@ class ReportServiceTests {
     private TeacherStudentLink link(UUID studentId, String alias, String name) {
         Teacher teacher = new Teacher("teacher_01", "teacher@school.edu", null, "School", "encoded");
         Student student = new Student(alias, "School", "encoded");
-        return new TeacherStudentLink(teacher, student, "encrypted-name", "Seguimiento mensual.");
+        return new TeacherStudentLink(
+                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", "Seguimiento mensual.");
     }
 
     private KpiSummaryResponse summary(

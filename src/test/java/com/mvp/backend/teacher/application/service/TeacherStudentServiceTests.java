@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,8 +22,10 @@ import com.mvp.backend.shared.security.PersonalDataCipher;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
 import com.mvp.backend.teacher.application.dto.CreateLinkedStudentRequest;
+import com.mvp.backend.teacher.domain.model.Classroom;
 import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
+import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
@@ -31,6 +34,9 @@ class TeacherStudentServiceTests {
 
     @Mock
     private TeacherRepository teacherRepository;
+
+    @Mock
+    private ClassroomRepository classroomRepository;
 
     @Mock
     private StudentRepository studentRepository;
@@ -50,6 +56,7 @@ class TeacherStudentServiceTests {
     void setUp() {
         teacherStudentService = new TeacherStudentService(
                 teacherRepository,
+                classroomRepository,
                 studentRepository,
                 linkRepository,
                 personalDataCipher,
@@ -60,9 +67,12 @@ class TeacherStudentServiceTests {
     void createsPseudonymousAccountAndEncryptedTeacherLinkInOneOperation() {
         UUID teacherId = UUID.randomUUID();
         Teacher teacher = new Teacher("sofia.garcia", "sofia@school.edu", null, "School 01", "encoded");
+        Classroom classroom = new Classroom(teacher, "3.º B");
         var request = new CreateLinkedStudentRequest("Nicolas Herrera", "Seguimiento mensual.");
 
         when(teacherRepository.findById(teacherId)).thenReturn(Optional.of(teacher));
+        when(classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacherId))
+                .thenReturn(List.of(classroom));
         when(studentRepository.existsByUsername(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("encoded-temporary-password");
         when(studentRepository.save(any(Student.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -93,7 +103,8 @@ class TeacherStudentServiceTests {
         UUID teacherId = UUID.randomUUID();
         Teacher teacher = new Teacher("sofia.garcia", "sofia@school.edu", null, "School 01", "encoded");
         Student student = new Student("tigre-07", "School 01", "old-hash");
-        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-real-name", null);
+        Classroom classroom = new Classroom(teacher, "3.º B");
+        TeacherStudentLink link = new TeacherStudentLink(teacher, student, classroom, "encrypted-real-name", null);
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, student.getId()))
                 .thenReturn(Optional.of(link));

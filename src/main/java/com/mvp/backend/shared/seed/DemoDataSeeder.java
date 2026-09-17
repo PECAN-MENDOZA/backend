@@ -96,13 +96,15 @@ public class DemoDataSeeder implements ApplicationRunner {
         String institution = "Colegio San Martin";
 
         insertTeacher(teacherId, teacherUsername, teacherEmail, teacherPhone, institution, teacherCreatedAt);
+        UUID classroomId = UUID.randomUUID();
+        insertClassroom(classroomId, teacherId, teacherCreatedAt);
 
         List<StudentSeed> students = buildStudents();
         for (int index = 0; index < students.size(); index++) {
             StudentSeed student = students.get(index);
             Instant createdAt = teacherCreatedAt.plus(index + 1, ChronoUnit.HOURS);
             insertStudent(student.id(), student.username(), institution, createdAt);
-            insertTeacherStudentLink(teacherId, student, createdAt.plus(1, ChronoUnit.HOURS));
+            insertTeacherStudentLink(teacherId, classroomId, student, createdAt.plus(1, ChronoUnit.HOURS));
         }
 
         List<SessionSeed> sessions = buildSessions(students, now);
@@ -181,16 +183,25 @@ public class DemoDataSeeder implements ApplicationRunner {
                 Timestamp.from(createdAt));
     }
 
-    private void insertTeacherStudentLink(UUID teacherId, StudentSeed student, Instant createdAt) {
+    private void insertClassroom(UUID id, UUID teacherId, Instant createdAt) {
+        jdbcTemplate.update(
+                "insert into classrooms (id, teacher_id, name, created_at) values (?, ?, 'Sin salón', ?)",
+                id,
+                teacherId,
+                Timestamp.from(createdAt));
+    }
+
+    private void insertTeacherStudentLink(UUID teacherId, UUID classroomId, StudentSeed student, Instant createdAt) {
         jdbcTemplate.update(
                 """
                 insert into teacher_student_links
-                    (id, teacher_id, student_id, encrypted_student_real_name, notes, created_at, deleted_at, last_access_at)
-                values (?, ?, ?, ?, ?, ?, null, ?)
+                    (id, teacher_id, student_id, classroom_id, encrypted_student_real_name, notes, created_at, deleted_at, last_access_at)
+                values (?, ?, ?, ?, ?, ?, ?, null, ?)
                 """,
                 UUID.randomUUID(),
                 teacherId,
                 student.id(),
+                classroomId,
                 personalDataCipher.encrypt(student.realName()),
                 "Seguimiento de pruebas de escritura y aceptacion de sugerencias.",
                 Timestamp.from(createdAt),
@@ -400,6 +411,7 @@ public class DemoDataSeeder implements ApplicationRunner {
         jdbcTemplate.update("delete from word_corrections");
         jdbcTemplate.update("delete from correction_sessions");
         jdbcTemplate.update("delete from teacher_student_links");
+        jdbcTemplate.update("delete from classrooms");
         jdbcTemplate.update("delete from student_users");
         jdbcTemplate.update("delete from teacher_users");
     }

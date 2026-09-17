@@ -17,6 +17,7 @@ import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.shared.security.PersonalDataCipher;
 import com.mvp.backend.student.domain.model.Student;
+import com.mvp.backend.teacher.domain.model.Classroom;
 import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
 import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
@@ -49,7 +50,8 @@ class KpiServiceTests {
         UUID studentId = UUID.randomUUID();
         Teacher teacher = new Teacher("teacher_01", "teacher@school.edu", null, "School", "encoded");
         Student student = new Student("student_01", "School", "encoded");
-        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+        TeacherStudentLink link = new TeacherStudentLink(
+                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", null);
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -73,7 +75,8 @@ class KpiServiceTests {
         UUID studentId = UUID.randomUUID();
         Teacher teacher = new Teacher("teacher_02", "teacher2@school.edu", null, "School", "encoded");
         Student student = new Student("student_02", "School", "encoded");
-        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+        TeacherStudentLink link = new TeacherStudentLink(
+                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", null);
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -97,7 +100,8 @@ class KpiServiceTests {
         UUID studentId = UUID.randomUUID();
         Teacher teacher = new Teacher("teacher_03", "teacher3@school.edu", null, "School", "encoded");
         Student student = new Student("student_03", "School", "encoded");
-        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+        TeacherStudentLink link = new TeacherStudentLink(
+                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", null);
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -126,7 +130,8 @@ class KpiServiceTests {
         UUID studentId = UUID.randomUUID();
         Teacher teacher = new Teacher("teacher_04", "teacher4@school.edu", null, "School", "encoded");
         Student student = new Student("student_04", "School", "encoded");
-        TeacherStudentLink link = new TeacherStudentLink(teacher, student, "encrypted-name", null);
+        TeacherStudentLink link = new TeacherStudentLink(
+                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", null);
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));

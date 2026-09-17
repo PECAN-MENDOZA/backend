@@ -19,6 +19,7 @@ import com.mvp.backend.teacher.application.dto.CreatedStudentAccountResponse;
 import com.mvp.backend.teacher.application.dto.ResetStudentPinResponse;
 import com.mvp.backend.teacher.application.dto.StudentLinkResponse;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
+import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
@@ -42,6 +43,7 @@ public class TeacherStudentService {
     private static final int PIN_BOUND = 10000;
 
     private final TeacherRepository teacherRepository;
+    private final ClassroomRepository classroomRepository;
     private final StudentRepository studentRepository;
     private final TeacherStudentLinkRepository linkRepository;
     private final PersonalDataCipher personalDataCipher;
@@ -50,11 +52,13 @@ public class TeacherStudentService {
 
     public TeacherStudentService(
             TeacherRepository teacherRepository,
+            ClassroomRepository classroomRepository,
             StudentRepository studentRepository,
             TeacherStudentLinkRepository linkRepository,
             PersonalDataCipher personalDataCipher,
             PasswordEncoder passwordEncoder) {
         this.teacherRepository = teacherRepository;
+        this.classroomRepository = classroomRepository;
         this.studentRepository = studentRepository;
         this.linkRepository = linkRepository;
         this.personalDataCipher = personalDataCipher;
@@ -65,6 +69,10 @@ public class TeacherStudentService {
     public CreatedStudentAccountResponse createLinkedStudent(UUID teacherId, CreateLinkedStudentRequest request) {
         var teacher = teacherRepository.findById(teacherId)
                 .orElseThrow(() -> new NotFoundException("Teacher not found"));
+        var classroom = classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacherId).stream()
+                .filter(candidate -> !candidate.isArchived())
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("Teacher has no classroom"));
 
         String username = generateStudentAlias();
         String pin = generatePin();
@@ -76,6 +84,7 @@ public class TeacherStudentService {
         var link = new TeacherStudentLink(
                 teacher,
                 student,
+                classroom,
                 personalDataCipher.encrypt(request.studentRealName()),
                 request.notes());
         TeacherStudentLink savedLink = linkRepository.save(link);

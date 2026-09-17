@@ -15,4 +15,10 @@ public interface TeacherStudentLinkRepository extends JpaRepository<TeacherStude
     Optional<TeacherStudentLink> findByTeacherIdAndStudentIdAndDeletedAtIsNull(UUID teacherId, UUID studentId);
 
     boolean existsByTeacherIdAndStudentIdAndDeletedAtIsNull(UUID teacherId, UUID studentId);
+
+    List<TeacherStudentLink> findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(UUID classroomId);
+
+    long countByClassroomIdAndDeletedAtIsNull(UUID classroomId);
+
+    long countByTeacherIdAndDeletedAtIsNull(UUID teacherId);
 }

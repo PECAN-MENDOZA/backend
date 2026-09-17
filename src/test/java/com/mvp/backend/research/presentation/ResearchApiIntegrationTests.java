@@ -42,6 +42,9 @@ import com.mvp.backend.correction.infrastructure.ai.AiCorrectionClient;
 import com.mvp.backend.correction.infrastructure.ai.AiCorrectionResponse;
 import com.mvp.backend.experiment.domain.model.AccessCode;
 import com.mvp.backend.research.domain.repository.ResearchAuditEventRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
+import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -89,6 +92,10 @@ class ResearchApiIntegrationTests {
     private ObjectMapper objectMapper;
     @Autowired
     private ResearchAuditEventRepository auditRepository;
+    @Autowired
+    private TeacherRepository teacherRepository;
+    @Autowired
+    private ClassroomRepository classroomRepository;
     @MockitoBean
     private AiCorrectionClient aiClient;
 
@@ -178,6 +185,7 @@ class ResearchApiIntegrationTests {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.role").value("TEACHER")));
         teacherId = UUID.fromString(teacher.get("userId").asText());
+        classroomRepository.save(new Classroom(teacherRepository.findById(teacherId).orElseThrow(), "3.º B"));
         teacherToken = json(mockMvc.perform(post("/api/v1/auth/teachers/login").contentType(MediaType.APPLICATION_JSON)
                         .content(obj("email", teacherEmail, "password", "DocentePass123")))
                 .andExpect(status().isOk())

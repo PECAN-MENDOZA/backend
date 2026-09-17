@@ -36,16 +36,35 @@ public class Teacher {
     @Column(name = "password_hash", nullable = false, length = 100)
     private String passwordHash;
 
+    @Column(name = "created_by")
+    private UUID createdBy;
+
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     public Teacher(String username, String email, String phone, String institution, String passwordHash) {
+        this(username, email, phone, institution, passwordHash, null, false);
+    }
+
+    public Teacher(
+            String username,
+            String email,
+            String phone,
+            String institution,
+            String passwordHash,
+            UUID createdBy,
+            boolean mustChangePassword) {
         this.id = UUID.randomUUID();
         this.username = username;
         this.email = email;
         this.phone = phone;
         this.institution = institution;
         this.passwordHash = passwordHash;
+        this.createdBy = createdBy;
+        this.mustChangePassword = mustChangePassword;
     }
 
     @PrePersist
@@ -53,5 +72,17 @@ public class Teacher {
         if (createdAt == null) {
             createdAt = Instant.now();
         }
+    }
+
+    /** Contrasena elegida por el docente: deja de exigirse el cambio. */
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+        this.mustChangePassword = false;
+    }
+
+    /** Contrasena temporal asignada por el investigador: se exige cambiarla al entrar. */
+    public void assignTemporaryPassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+        this.mustChangePassword = true;
     }
 }

@@ -49,6 +49,7 @@ public class SecurityConfig {
                         // pero un endpoint nuevo bajo estos prefijos queda protegido aunque olvide la anotacion.
                         .requestMatchers("/api/v1/research/**").hasRole("RESEARCHER")
                         .requestMatchers("/api/v1/experiments/**").hasRole("STUDENT")
+                        .requestMatchers("/api/v1/tests/**", "/api/v1/attempts/**").hasRole("STUDENT")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)))

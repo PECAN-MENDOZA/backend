@@ -13,11 +13,17 @@ respuesta de investigación contiene el nombre real de un alumno.
 
 | Rol | Cómo se obtiene | Puede | No puede |
 |---|---|---|---|
-| `RESEARCHER` | Cuenta creada por variables de entorno (sección 2) + `POST /api/v1/auth/staff/login` | `/api/v1/research/**` | `/api/v1/corrections/**`, `/api/v1/teachers/**`, `/api/v1/tests/**`, `/api/v1/attempts/**` (403) |
-| `TEACHER` | Alta por un investigador + `POST /api/v1/auth/teachers/login`; `staff/login` también acepta docentes | Gestión de sus salones y alumnos | `/api/v1/research/**` (403) |
-| `STUDENT` | `POST /api/v1/auth/students/login` con alias + PIN | `/api/v1/tests/**`, `/api/v1/attempts/**`, `/api/v1/corrections/**` | `/api/v1/research/**` (403) |
+| `RESEARCHER` | Cuenta creada por variables de entorno (sección 2) + `POST /api/v1/auth/staff/login` | `/api/v1/research/**` | `/api/v1/corrections/**`, `/api/v1/students/**`, `/api/v1/teachers/**`, `/api/v1/kpis/**`, `/api/v1/reports/**`, `/api/v1/tests/**`, `/api/v1/attempts/**` (403) |
+| `TEACHER` | Alta por un investigador + `POST /api/v1/auth/teachers/login`; `staff/login` también acepta docentes | `/api/v1/teachers/**`, `/api/v1/kpis/**`, `/api/v1/reports/**` | `/api/v1/research/**`, `/api/v1/students/**`, `/api/v1/corrections/**`, `/api/v1/tests/**`, `/api/v1/attempts/**` (403) |
+| `STUDENT` | `POST /api/v1/auth/students/login` con alias + PIN | `/api/v1/students/**`, `/api/v1/tests/**`, `/api/v1/attempts/**`, `/api/v1/corrections/**` | `/api/v1/research/**`, `/api/v1/teachers/**`, `/api/v1/kpis/**`, `/api/v1/reports/**` (403) |
 
-Sin token: 401. Del lado del investigador, un intento de otra prueba se reporta como `404 "Attempt not found"`
+Estas reglas por prefijo viven en `SecurityConfig` además del `@PreAuthorize` de cada controlador: un rol ajeno
+recibe 403 incluso en una ruta inexistente bajo esos prefijos.
+
+Sin token: 401. Un docente con contraseña temporal (`mustChangePassword = true` en la respuesta de login, es decir,
+recién creado o con contraseña restablecida por el investigador) recibe `403 {"message":"Password change required"}`
+en **toda** ruta hasta que llame a `POST /api/v1/auth/teachers/change-password`; ese es el único endpoint que se le
+permite mientras tanto (el filtro se evalúa después de las reglas de rol, así que un 401/403 de rol prevalece). Del lado del investigador, un intento de otra prueba se reporta como `404 "Attempt not found"`
 igual que uno inexistente (no distingue "ajeno" de "inexistente", para no filtrar su existencia). Del lado del
 alumno, un intento o una respuesta de otro alumno responde `403` (existe, pero no es suyo) mientras que uno
 inexistente responde `404`. El investigador nunca ve el nombre real de un alumno: solo su `username` pseudónimo.
@@ -52,14 +58,14 @@ sola vez y el docente debe cambiarla. Los alumnos se crean siempre dentro de un 
 
 | Método | Ruta | Rol | Cuerpo | Respuesta |
 |---|---|---|---|---|
-| `POST` | `/api/v1/research/teachers` | `RESEARCHER` | `{fullName, email, institution}` | `201 CreatedTeacherResponse` con contraseña temporal |
-| `GET` | `/api/v1/research/teachers` | `RESEARCHER` | — | `200 List<TeacherSummaryResponse>` |
+| `POST` | `/api/v1/research/teachers` | `RESEARCHER` | `{fullName, email, institution}` | `201 CreatedTeacherResponse{id, username, fullName, email, institution, temporaryPassword}` (la contraseña temporal solo se entrega aquí) |
+| `GET` | `/api/v1/research/teachers` | `RESEARCHER` | — | `200 List<TeacherSummaryResponse{id, username, fullName, email, institution, createdAt, mustChangePassword, classroomCount, studentCount}>` |
 | `POST` | `/api/v1/research/teachers/{teacherId}/reset-password` | `RESEARCHER` | — | `200 TemporaryPasswordResponse` |
-| `GET` | `/api/v1/research/classrooms` | `RESEARCHER` | — | `200 List<ClassroomDirectoryResponse>` sin nombres reales de alumnos |
+| `GET` | `/api/v1/research/classrooms` | `RESEARCHER` | — | `200 List<ClassroomDirectoryResponse{id, name, teacherId, teacherUsername, archived, students[{studentId, username, lastActivityAt}]}>` sin nombres reales; `lastActivityAt` = fecha de la última sesión de corrección del alumno (`null` si nunca escribió) |
 | `POST` | `/api/v1/auth/teachers/change-password` | `TEACHER` | `{currentPassword, newPassword}` | `204` |
-| `POST` | `/api/v1/teachers/classrooms` | `TEACHER` | `{name}` | `201 ClassroomResponse` |
+| `POST` | `/api/v1/teachers/classrooms` | `TEACHER` | `{name}` | `201 ClassroomResponse`; `409 "Classroom name is already in use"` solo si otro salón **activo** del docente lleva ese nombre (un archivado no bloquea el nombre) |
 | `GET` | `/api/v1/teachers/classrooms` | `TEACHER` | — | `200 List<ClassroomResponse>` |
-| `PATCH` | `/api/v1/teachers/classrooms/{classroomId}` | `TEACHER` | `{name?, archived?}` | `200 ClassroomResponse` |
+| `PATCH` | `/api/v1/teachers/classrooms/{classroomId}` | `TEACHER` | `{name?, archived?}` | `200 ClassroomResponse`; `409` si el nombre nuevo (o el del salón al desarchivarlo) choca con uno activo |
 | `GET` | `/api/v1/teachers/classrooms/{classroomId}/students` | `TEACHER` | — | `200 List<StudentLinkResponse>` |
 | `POST` | `/api/v1/teachers/classrooms/{classroomId}/students` | `TEACHER` | `{studentRealName?, notes?, count?}` | `201 List<CreatedStudentAccountResponse>` |
 | `GET` | `/api/v1/teachers/students` | `TEACHER` | — | `200 List<StudentLinkResponse>` |
@@ -100,6 +106,7 @@ POST /api/v1/research/tests/{testId}/close          → 200 TestDetailResponse (
 POST /api/v1/research/tests/{testId}/assignments
 {"classroomId":"<uuid>"}            (o bien)   {"studentIds":["<uuid>", …]}
 → 200 List<AssignmentStatusResponse>   (exactamente uno de los dos; 400 si vienen ambos o ninguno;
+                                         400 "Cannot assign an archived classroom"; 404 "Classroom not found";
                                          409 si la prueba no está ACTIVE; idempotente: ya asignados se ignoran)
 GET  /api/v1/research/tests/{testId}/assignments → 200 List<AssignmentStatusResponse>
 ```
@@ -115,6 +122,7 @@ GET  /api/v1/research/tests/{testId}/attempts/{attemptId}     → 200 AttemptDet
 POST /api/v1/research/tests/{testId}/attempts/{attemptId}/exclude
 {"reason":"texto de 10 a 500 caracteres"}
 → 200 AttemptDetailResponse   (marca excludedAt/excludedBy/exclusionReason; no borra nada)
+   409 "Attempt already excluded"   (la primera exclusión es definitiva: motivo y autor no se sobrescriben)
 
 PUT  /api/v1/research/responses/{responseId}/annotation
 {"errorCount":2}
@@ -139,7 +147,8 @@ terminarlas (solo `position` y `assistance`).
 
 ```http
 GET  /api/v1/tests/assigned → 200 List<AssignedTestResponse>
-     status: PENDING (sin intento), IN_PROGRESS o COMPLETED. Una prueba CLOSED sin intento no se lista.
+     status: PENDING (sin intento), IN_PROGRESS o COMPLETED. Una prueba CLOSED sin intento no se lista;
+     tampoco una CLOSED cuyos únicos intentos estén CANCELLED (ya no puede iniciarse).
 
 POST /api/v1/tests/{testId}/attempts
 {"appVersion":"1.4.0"}
@@ -231,7 +240,9 @@ cada respuesta de **todo** intento `COMPLETED` (también los excluidos, marcados
 ### 6.1 `error_source` y oraciones omitidas
 
 - `error_source` por respuesta: `AUTO` (dictada, conteo del alineador), `ANNOTATED` (libre ya anotada por el
-  investigador) o `PENDING` (libre sin anotar: `TestResultsResponse.incomplete = true` mientras exista alguna).
+  investigador) o `PENDING` (libre sin anotar). `TestResultsResponse.incomplete = true` mientras exista alguna
+  libre **no omitida** sin anotar; una libre omitida (`skipped=true`) sale como `PENDING` en el CSV y en
+  `AttemptDetailResponse` pero **no** marca `incomplete`, porque no entra en ninguna métrica.
 - Una respuesta con `skipped=true` **queda excluida de toda métrica**: no participa en `errorsPer100Words`,
   `wordsPerMinute`, el conteo de `participants`, la diferencia pareada ni los contadores de sugerencias
   (`offered`/`accepted` agregados de `acceptanceRate`). Sigue apareciendo en el CSV y en `AttemptDetailResponse`
@@ -312,7 +323,7 @@ aceptó; si no, el texto original.
 | `GET` | `/api/v1/teachers/students/{studentId}/help` | `from?`, `to?` | `200 StudentHelpResponse{studentId, from, to, total, edited, accepted, rejected, undone, unanswered, editedPct, acceptedPct, rejectedPct, undonePct, unansweredPct}`; porcentajes sobre `total` (2 decimales), `0` si `total = 0` |
 | `GET` | `/api/v1/teachers/students/{studentId}/writings` | `from?`, `to?`, `limit?` (100; 1–200) | `200 List<StudentWritingItem{sessionId, createdAt, originalText, finalText, outcome, outcomeLabel, inTest, assistance, testCode}>` más recientes primero |
 | `GET` | `/api/v1/teachers/students/{studentId}/tests` | — | `200 List<StudentTestSummary{attemptId, testCode, testTitle, completedAt, excluded, sentences[{position, kind, assistance, referenceText, finalText, skipped, errorCount, errorSource, edits[{type, expected, written}], durationFromFirstKeyMs}]}>`; solo intentos `COMPLETED` (los excluidos por el investigador con `excluded = true`; los cancelados no aparecen), terminados más recientemente primero |
-| `GET` | `/api/v1/teachers/tests/live` | — | `200 List<LiveAttemptItem{attemptId, studentId, username, realName, classroomId, classroomName, testCode, testTitle, currentPosition, sentenceCount, startedAt}>`: intentos `IN_PROGRESS` de los alumnos vinculados activos del docente, quien empezó antes primero; `currentPosition` = oraciones terminadas + 1 |
+| `GET` | `/api/v1/teachers/tests/live` | — | `200 List<LiveAttemptItem{attemptId, studentId, username, realName, classroomId, classroomName, testCode, testTitle, currentPosition, sentenceCount, startedAt}>`: intentos `IN_PROGRESS` de los alumnos vinculados activos del docente, quien empezó antes primero; `currentPosition` = min(oraciones terminadas + 1, `sentenceCount`) |
 | `GET` | `/api/v1/reports/students/{studentId}/pdf` | `from?`, `to?` | `200 application/pdf` (`Content-Disposition: attachment; filename="reporte-<username>-<from>_<to>.pdf"`): "Reporte del periodo" con nombre del alumno, periodo, resumen de ayuda, errores por tipo con hasta 3 ejemplos, palabras para practicar y las últimas 20 escrituras (`original -> final · desenlace`). Sin gráficos ni tendencias |
 | `GET` | `/api/v1/kpis/students/{studentId}/summary`, `/acceptance-rate`, `/top-words`, `/error-types` | `from?`, `to?` | KPIs históricos del alumno en el mismo periodo (`from`/`to` en la respuesta) |
 

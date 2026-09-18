@@ -3,6 +3,7 @@ package com.mvp.backend.shared.seed;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
@@ -10,6 +11,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -141,6 +146,65 @@ class DemoDataSeederTests {
         assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage)
                 .anySatisfy(message -> assertThat(message).contains("Demo test seeded").contains("PRUEBA-DEMO")
                         .contains("6"));
+    }
+
+    @Test
+    void demoTestIsNotInsertedAgainWhenCodeAlreadyExists() throws Exception {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        PersonalDataCipher cipher = mock(PersonalDataCipher.class);
+        lenient().when(passwordEncoder.encode(anyString())).thenReturn("hash");
+        when(cipher.encrypt(anyString())).thenReturn("enc");
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq("researcher@example.com")))
+                .thenReturn(List.of(UUID.randomUUID()));
+        when(jdbcTemplate.queryForObject(contains("sentence_tests"), eq(Long.class), eq("PRUEBA-DEMO")))
+                .thenReturn(1L);
+        DemoDataSeeder seeder = new DemoDataSeeder(
+                new DemoSeedProperties(true, false, false, 2, TEACHER_PASSWORD, STUDENT_PASSWORD),
+                jdbcTemplate, passwordEncoder, cipher, new ObjectMapper(), mock(ApplicationContext.class),
+                new NoOpTransactionManager(), "researcher@example.com");
+
+        seeder.run(new DefaultApplicationArguments());
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Object[]> params = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbcTemplate, atLeastOnce()).update(sql.capture(), params.capture());
+        assertThat(sql.getAllValues()).noneMatch(statement -> statement.contains("sentence_tests")
+                || statement.contains("test_sentences"));
+        assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(message -> assertThat(message).contains("Demo test seed skipped")
+                        .contains("PRUEBA-DEMO").contains("already exists"));
+    }
+
+    @Test
+    void seededSessionsAreNeverInTheFuture() throws Exception {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        PersonalDataCipher cipher = mock(PersonalDataCipher.class);
+        lenient().when(passwordEncoder.encode(anyString())).thenReturn("hash");
+        when(cipher.encrypt(anyString())).thenReturn("enc");
+        DemoDataSeeder seeder = new DemoDataSeeder(
+                new DemoSeedProperties(true, false, false, 2, TEACHER_PASSWORD, STUDENT_PASSWORD),
+                jdbcTemplate, passwordEncoder, cipher, new ObjectMapper(), mock(ApplicationContext.class),
+                new NoOpTransactionManager(), "");
+
+        seeder.run(new DefaultApplicationArguments());
+        Instant afterRun = Instant.now();
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Object[]> params = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbcTemplate, atLeastOnce()).update(sql.capture(), params.capture());
+        List<Instant> createdAts = new ArrayList<>();
+        for (int i = 0; i < sql.getAllValues().size(); i++) {
+            if (sql.getAllValues().get(i).contains("insert into correction_sessions")) {
+                Object[] row = params.getAllValues().get(i);
+                createdAts.add(((Timestamp) row[row.length - 1]).toInstant());
+            }
+        }
+        assertThat(createdAts).isNotEmpty().allSatisfy(createdAt -> assertThat(createdAt).isBeforeOrEqualTo(afterRun));
+        // La ultima jornada sembrada sigue siendo reciente (ayer), no se corrio toda la serie al pasado.
+        assertThat(createdAts).anySatisfy(createdAt ->
+                assertThat(createdAt).isAfter(afterRun.minus(2, ChronoUnit.DAYS)));
     }
 
     private static final class NoOpTransactionManager implements PlatformTransactionManager {

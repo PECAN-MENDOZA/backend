@@ -47,4 +47,18 @@ public interface WordCorrectionRepository extends JpaRepository<WordCorrection, 
             @Param("studentId") UUID studentId,
             @Param("start") Instant start,
             @Param("end") Instant end);
+
+    // Pares (alumno, palabra escrita, palabra corregida) de un grupo de alumnos en [start, end).
+    @Query("""
+            select session.student.id, correction.originalWord, correction.correctedWord
+            from WordCorrection correction
+            join correction.correctionSession session
+            where session.student.id in :studentIds
+              and session.createdAt >= :start
+              and session.createdAt < :end
+            """)
+    List<Object[]> wordPairsForStudents(
+            @Param("studentIds") List<UUID> studentIds,
+            @Param("start") Instant start,
+            @Param("end") Instant end);
 }

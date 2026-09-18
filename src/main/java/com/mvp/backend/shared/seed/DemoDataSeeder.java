@@ -2,13 +2,9 @@ package com.mvp.backend.shared.seed;
 
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -112,11 +108,6 @@ public class DemoDataSeeder implements ApplicationRunner {
         }
 
         List<SessionSeed> sessions = buildSessions(students, now);
-        Map<UUID, StudentMetrics> metricsByStudent = new LinkedHashMap<>();
-        for (StudentSeed student : students) {
-            metricsByStudent.put(student.id(), new StudentMetrics());
-        }
-
         for (SessionSeed session : sessions) {
             insertSession(session);
             // Las palabras corregidas solo existen cuando el alumno acepta la sugerencia.
@@ -125,22 +116,6 @@ public class DemoDataSeeder implements ApplicationRunner {
                     insertWordCorrection(wordCorrection, session.id());
                 }
             }
-
-            StudentMetrics metrics = metricsByStudent.get(session.studentId());
-            metrics.totalSessions++;
-            if (session.acceptedCorrection()) {
-                metrics.acceptedSessions++;
-                for (WordCorrectionSeed wordCorrection : session.wordCorrections()) {
-                    metrics.wordCounts.merge(wordCorrection.originalWord(), 1, Integer::sum);
-                }
-            }
-        }
-
-        LocalDate reportMonth = LocalDate.now(ZoneOffset.UTC).withDayOfMonth(1);
-        Instant generatedAt = now;
-        for (StudentSeed student : students) {
-            StudentMetrics metrics = metricsByStudent.get(student.id());
-            insertMonthlyReport(student.id(), reportMonth, generatedAt, metrics);
         }
 
         seedDemoTest(now);
@@ -313,25 +288,6 @@ public class DemoDataSeeder implements ApplicationRunner {
                 wordCorrection.endPosition());
     }
 
-    private void insertMonthlyReport(UUID studentId, LocalDate month, Instant generatedAt, StudentMetrics metrics) throws Exception {
-        double acceptanceRate = metrics.totalSessions == 0 ? 0 : round(metrics.acceptedSessions * 100.0 / metrics.totalSessions);
-        String frequentWordsJson = objectMapper.writeValueAsString(metrics.wordCounts);
-        jdbcTemplate.update(
-                """
-                insert into monthly_reports
-                    (id, student_id, month, total_submissions, total_accepted, acceptance_rate, frequent_errors_json, generated_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                UUID.randomUUID(),
-                studentId,
-                month,
-                metrics.totalSessions,
-                metrics.acceptedSessions,
-                acceptanceRate,
-                frequentWordsJson,
-                Timestamp.from(generatedAt));
-    }
-
     private List<StudentSeed> buildStudents() {
         String[][] studentData = {
                 {"student_001", "Mateo Rojas"},
@@ -477,7 +433,6 @@ public class DemoDataSeeder implements ApplicationRunner {
     }
 
     private void resetDatabase() {
-        jdbcTemplate.update("delete from monthly_reports");
         jdbcTemplate.update("delete from word_corrections");
         // correction_sessions referencia test_responses: se borra antes que las tablas de pruebas.
         jdbcTemplate.update("delete from correction_sessions");
@@ -495,10 +450,6 @@ public class DemoDataSeeder implements ApplicationRunner {
     private long countRows(String tableName) {
         Long value = jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
         return value == null ? 0 : value;
-    }
-
-    private double round(double value) {
-        return Math.round(value * 100.0) / 100.0;
     }
 
     private record StudentSeed(UUID id, String username, String realName) {
@@ -531,11 +482,5 @@ public class DemoDataSeeder implements ApplicationRunner {
             long responseTimeMs,
             Instant createdAt,
             List<WordCorrectionSeed> wordCorrections) {
-    }
-
-    private static final class StudentMetrics {
-        private int totalSessions;
-        private int acceptedSessions;
-        private final Map<String, Integer> wordCounts = new LinkedHashMap<>();
     }
 }

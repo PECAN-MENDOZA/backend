@@ -2,16 +2,10 @@ package com.mvp.backend.kpi.application.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
-import java.time.YearMonth;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
+import java.time.Clock;
 import java.util.Comparator;
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
@@ -22,15 +16,13 @@ import com.mvp.backend.correction.domain.model.ErrorType;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
 import com.mvp.backend.correction.domain.service.WordErrorClassifier;
+import com.mvp.backend.insights.domain.Period;
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
-import com.mvp.backend.kpi.application.dto.AcceptanceTrendResponse;
 import com.mvp.backend.kpi.application.dto.ErrorTypeItem;
 import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
-import com.mvp.backend.kpi.application.dto.MonthlyAcceptancePoint;
 import com.mvp.backend.kpi.application.dto.TopWordItem;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
-import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.ForbiddenException;
 import com.mvp.backend.shared.security.PersonalDataCipher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
@@ -43,47 +35,50 @@ public class KpiService {
     private final WordCorrectionRepository wordCorrectionRepository;
     private final TeacherStudentLinkRepository linkRepository;
     private final PersonalDataCipher personalDataCipher;
+    private final Clock clock;
 
     public KpiService(
             CorrectionSessionRepository sessionRepository,
             WordCorrectionRepository wordCorrectionRepository,
             TeacherStudentLinkRepository linkRepository,
-            PersonalDataCipher personalDataCipher) {
+            PersonalDataCipher personalDataCipher,
+            Clock clock) {
         this.sessionRepository = sessionRepository;
         this.wordCorrectionRepository = wordCorrectionRepository;
         this.linkRepository = linkRepository;
         this.personalDataCipher = personalDataCipher;
+        this.clock = clock;
     }
 
     @Transactional
-    public AcceptanceRateResponse acceptanceRate(UUID teacherId, UUID studentId, String month) {
+    public AcceptanceRateResponse acceptanceRate(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
-        return acceptanceRate(studentId, parseMonth(month));
+        return acceptanceRate(studentId, Period.parse(from, to, clock));
     }
 
     @Transactional
-    public TopWordsResponse topWords(UUID teacherId, UUID studentId, String month) {
+    public TopWordsResponse topWords(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
-        return topWords(studentId, parseMonth(month));
+        return topWords(studentId, Period.parse(from, to, clock));
     }
 
     @Transactional
-    public KpiSummaryResponse summary(UUID teacherId, UUID studentId, String month) {
+    public KpiSummaryResponse summary(UUID teacherId, UUID studentId, String from, String to) {
         TeacherStudentLink link = requireLink(teacherId, studentId);
-        YearMonth parsedMonth = parseMonth(month);
-        var acceptanceRate = acceptanceRate(studentId, parsedMonth);
-        var topWords = topWords(studentId, parsedMonth);
+        Period period = Period.parse(from, to, clock);
+        var acceptanceRate = acceptanceRate(studentId, period);
+        var topWords = topWords(studentId, period);
         return new KpiSummaryResponse(
                 studentId,
                 personalDataCipher.decrypt(link.getEncryptedStudentRealName()),
-                parsedMonth.toString(),
+                period.from().toString(),
+                period.to().toString(),
                 acceptanceRate,
                 topWords.topWords());
     }
 
-    private AcceptanceRateResponse acceptanceRate(UUID studentId, YearMonth month) {
-        MonthRange range = range(month);
-        var result = sessionRepository.acceptanceSummary(studentId, range.start(), range.end());
+    private AcceptanceRateResponse acceptanceRate(UUID studentId, Period period) {
+        var result = sessionRepository.acceptanceSummary(studentId, period.start(), period.end());
         long total = number(result.getTotalSessions());
         long accepted = number(result.getAcceptedSessions());
         long rejected = number(result.getRejectedSessions());
@@ -91,7 +86,8 @@ public class KpiService {
         long edited = number(result.getEditedSessions());
         return new AcceptanceRateResponse(
                 studentId,
-                month.toString(),
+                period.from().toString(),
+                period.to().toString(),
                 total,
                 accepted,
                 rejected,
@@ -100,27 +96,25 @@ public class KpiService {
                 percentage(accepted, total));
     }
 
-    private TopWordsResponse topWords(UUID studentId, YearMonth month) {
-        MonthRange range = range(month);
+    private TopWordsResponse topWords(UUID studentId, Period period) {
         List<TopWordItem> words = wordCorrectionRepository
-                .topWords(studentId, range.start(), range.end(), PageRequest.of(0, 10))
+                .topWords(studentId, period.start(), period.end(), PageRequest.of(0, 10))
                 .stream()
                 .map(row -> new TopWordItem(
                         (String) row[0],
                         number(row[1]),
                         number(row[2])))
                 .toList();
-        return new TopWordsResponse(studentId, month.toString(), words);
+        return new TopWordsResponse(studentId, period.from().toString(), period.to().toString(), words);
     }
 
     @Transactional
-    public ErrorTypesResponse errorTypes(UUID teacherId, UUID studentId, String month) {
+    public ErrorTypesResponse errorTypes(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
-        YearMonth parsedMonth = parseMonth(month);
-        MonthRange range = range(parsedMonth);
+        Period period = Period.parse(from, to, clock);
 
         EnumMap<ErrorType, Long> counts = new EnumMap<>(ErrorType.class);
-        for (Object[] row : wordCorrectionRepository.wordPairsForMonth(studentId, range.start(), range.end())) {
+        for (Object[] row : wordCorrectionRepository.wordPairsForMonth(studentId, period.start(), period.end())) {
             ErrorType type = WordErrorClassifier.classify((String) row[0], (String) row[1]);
             counts.merge(type, 1L, Long::sum);
         }
@@ -135,41 +129,7 @@ public class KpiService {
                 .sorted(Comparator.comparingLong(ErrorTypeItem::count).reversed())
                 .toList();
 
-        return new ErrorTypesResponse(studentId, parsedMonth.toString(), total, items);
-    }
-
-    private static final int MAX_TREND_MONTHS = 24;
-
-    @Transactional
-    public AcceptanceTrendResponse acceptanceTrend(UUID teacherId, UUID studentId, String from, String to) {
-        requireLink(teacherId, studentId);
-        YearMonth start = parseMonth(from);
-        YearMonth end = parseMonth(to);
-        if (start.isAfter(end)) {
-            throw new BusinessException("'from' must not be after 'to'");
-        }
-        long span = start.until(end, java.time.temporal.ChronoUnit.MONTHS) + 1;
-        if (span > MAX_TREND_MONTHS) {
-            throw new BusinessException("Trend range must not exceed " + MAX_TREND_MONTHS + " months");
-        }
-
-        Instant rangeStart = start.atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-        Instant rangeEnd = end.plusMonths(1).atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-
-        Map<String, long[]> byMonth = new HashMap<>();
-        for (Object[] row : sessionRepository.monthlyAcceptance(studentId, rangeStart, rangeEnd)) {
-            byMonth.put((String) row[0], new long[] {number(row[1]), number(row[2])});
-        }
-
-        List<MonthlyAcceptancePoint> series = new ArrayList<>();
-        for (YearMonth month = start; !month.isAfter(end); month = month.plusMonths(1)) {
-            long[] totals = byMonth.getOrDefault(month.toString(), new long[] {0L, 0L});
-            long total = totals[0];
-            long accepted = totals[1];
-            series.add(new MonthlyAcceptancePoint(month.toString(), total, accepted, percentage(accepted, total)));
-        }
-
-        return new AcceptanceTrendResponse(studentId, start.toString(), end.toString(), series);
+        return new ErrorTypesResponse(studentId, period.from().toString(), period.to().toString(), total, items);
     }
 
     private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {
@@ -177,20 +137,6 @@ public class KpiService {
                 .orElseThrow(() -> new ForbiddenException("Teacher does not have access to this student"));
         link.registerAccess();
         return link;
-    }
-
-    private YearMonth parseMonth(String month) {
-        try {
-            return YearMonth.parse(month);
-        } catch (DateTimeParseException exception) {
-            throw new BusinessException("Month must use YYYY-MM format");
-        }
-    }
-
-    private MonthRange range(YearMonth month) {
-        Instant start = month.atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-        Instant end = month.plusMonths(1).atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-        return new MonthRange(start, end);
     }
 
     private long number(Object value) {
@@ -203,8 +149,5 @@ public class KpiService {
 
     private double round(double value) {
         return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
-    }
-
-    private record MonthRange(Instant start, Instant end) {
     }
 }

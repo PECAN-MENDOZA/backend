@@ -1,11 +1,10 @@
 package com.mvp.backend.report.infrastructure.pdf;
 
-import java.io.ByteArrayOutputStream;
 import java.awt.Color;
-import java.time.ZoneOffset;
+import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Locale;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
@@ -24,29 +23,24 @@ import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfWriter;
+import com.mvp.backend.insights.domain.Period;
 import com.mvp.backend.report.application.dto.ReportPdfDocument;
 import com.mvp.backend.shared.exception.PdfGenerationException;
 
+/** Compone el "Reporte del periodo": texto y tablas descriptivas; sin graficos, sin tendencias ni valoraciones. */
 @Component
 public class SimplePdfGenerator {
 
-    private static final DateTimeFormatter GENERATED_AT_FORMAT =
-            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm 'UTC'", new Locale("es", "PE"));
+    private static final DateTimeFormatter WRITING_AT =
+            DateTimeFormatter.ofPattern("dd/MM HH:mm").withZone(Period.ZONE);
+    private static final DateTimeFormatter GENERATED_AT =
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(Period.ZONE);
 
-    private static final Color NAVY = new Color(41, 84, 140);
-    private static final Color GOLD = new Color(232, 176, 64);
     private static final Color INK = new Color(37, 49, 63);
     private static final Color MUTED = new Color(105, 123, 140);
     private static final Color BORDER = new Color(219, 229, 239);
     private static final Color PANEL = new Color(247, 250, 255);
-    private static final Color SUCCESS_PANEL = new Color(233, 248, 237);
-    private static final Color WARNING_PANEL = new Color(255, 243, 235);
-    private static final Color EMPTY_PANEL = new Color(248, 242, 255);
 
-    private static final Font TITLE_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 24, Color.WHITE);
-    private static final Font SUBTITLE_FONT = FontFactory.getFont(FontFactory.HELVETICA, 11, new Color(232, 240, 255));
-    private static final Font HERO_META_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE);
-    private static final Font HERO_SMALL_FONT = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(232, 240, 255));
     private static final Font CARD_LABEL_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, MUTED);
     private static final Font CARD_VALUE_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, INK);
     private static final Font SECTION_FONT = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14, INK);
@@ -67,13 +61,22 @@ public class SimplePdfGenerator {
             pdf.add(firstPageSpacer());
             pdf.add(identityCard(document));
             pdf.add(Chunk.NEWLINE);
-            pdf.add(metricCards(document));
+            pdf.add(sectionTitle("Ayuda del teclado"));
+            pdf.add(helpCards(document.help()));
             pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Palabras recurrentes"));
-            pdf.add(topWordsTable(document.topWords()));
+            pdf.add(sectionTitle("Errores por tipo"));
+            pdf.add(errorTypesTable(document.errorTypes()));
             pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Notas docentes"));
-            pdf.add(notesBlock(document.teacherNotes()));
+            pdf.add(sectionTitle("Palabras para practicar"));
+            pdf.add(practiceWordsTable(document.practiceWords()));
+            pdf.add(Chunk.NEWLINE);
+            pdf.add(sectionTitle("Últimas escrituras"));
+            pdf.add(writingsTable(document.writings()));
+            if (document.teacherNotes() != null && !document.teacherNotes().isBlank()) {
+                pdf.add(Chunk.NEWLINE);
+                pdf.add(sectionTitle("Notas del docente"));
+                pdf.add(notesBlock(document.teacherNotes()));
+            }
             pdf.close();
             return output.toByteArray();
         } catch (Exception exception) {
@@ -83,7 +86,7 @@ public class SimplePdfGenerator {
 
     private Paragraph firstPageSpacer() {
         Paragraph spacer = new Paragraph(" ", BODY_FONT);
-        spacer.setSpacingAfter(90);
+        spacer.setSpacingAfter(70);
         return spacer;
     }
 
@@ -101,7 +104,8 @@ public class SimplePdfGenerator {
         PdfPCell right = panelCell(PANEL);
         right.addElement(labelParagraph("Docente"));
         right.addElement(valueParagraph(document.teacherName(), 13));
-        right.addElement(detailParagraph("Periodo: " + document.monthCode()));
+        right.addElement(detailParagraph("Periodo: " + document.periodLabel()));
+        right.addElement(detailParagraph("Generado: " + GENERATED_AT.format(document.generatedAt())));
         right.setPadding(18);
 
         table.addCell(left);
@@ -109,14 +113,76 @@ public class SimplePdfGenerator {
         return table;
     }
 
-    private PdfPTable metricCards(ReportPdfDocument document) {
-        PdfPTable table = new PdfPTable(new float[] {1, 1, 1, 1});
+    /** Conteo por desenlace de las correcciones pedidas en el periodo. */
+    private PdfPTable helpCards(ReportPdfDocument.HelpSummary help) {
+        PdfPTable table = new PdfPTable(new float[] {1, 1, 1});
         table.setWidthPercentage(100);
         table.getDefaultCell().setBorder(Rectangle.NO_BORDER);
-        table.addCell(metricCell("Envios", String.valueOf(document.totalSubmissions()), PANEL));
-        table.addCell(metricCell("Aceptadas", String.valueOf(document.totalAccepted()), SUCCESS_PANEL));
-        table.addCell(metricCell("Rechazadas", String.valueOf(document.totalRejected()), WARNING_PANEL));
-        table.addCell(metricCell("Sin respuesta", String.valueOf(document.unanswered()), EMPTY_PANEL));
+        table.addCell(metricCell("Correcciones pedidas", help.total()));
+        table.addCell(metricCell("Resolvió solo", help.edited()));
+        table.addCell(metricCell("Aceptó", help.accepted()));
+        table.addCell(metricCell("Rechazó", help.rejected()));
+        table.addCell(metricCell("Deshizo", help.undone()));
+        table.addCell(metricCell("Sin respuesta", help.unanswered()));
+        return table;
+    }
+
+    private PdfPTable errorTypesTable(List<ReportPdfDocument.ErrorTypeSection> types) {
+        if (types.isEmpty()) {
+            return emptyState("No hay palabras corregidas en este periodo.");
+        }
+        PdfPTable table = new PdfPTable(new float[] {2f, 0.8f, 3.2f});
+        table.setWidthPercentage(100);
+        table.setHeaderRows(1);
+        table.addCell(headerCell("Tipo"));
+        table.addCell(headerCell("Veces"));
+        table.addCell(headerCell("Ejemplos"));
+        for (ReportPdfDocument.ErrorTypeSection type : types) {
+            table.addCell(bodyCell(type.label(), false));
+            table.addCell(bodyCell(String.valueOf(type.count()), true));
+            table.addCell(bodyCell(type.examples().stream()
+                    .map(word -> word.original() + " -> " + word.corrected() + " (" + word.count() + ")")
+                    .collect(Collectors.joining("; ")), false));
+        }
+        return table;
+    }
+
+    private PdfPTable practiceWordsTable(List<ReportPdfDocument.WordEntry> words) {
+        if (words.isEmpty()) {
+            return emptyState("Ninguna palabra se repitió en este periodo.");
+        }
+        PdfPTable table = new PdfPTable(new float[] {2.4f, 2.4f, 1.2f});
+        table.setWidthPercentage(100);
+        table.setHeaderRows(1);
+        table.addCell(headerCell("Escribió"));
+        table.addCell(headerCell("Forma corregida"));
+        table.addCell(headerCell("Veces"));
+        for (ReportPdfDocument.WordEntry word : words) {
+            table.addCell(bodyCell(word.original(), false));
+            table.addCell(bodyCell(word.corrected(), false));
+            table.addCell(bodyCell(String.valueOf(word.count()), true));
+        }
+        return table;
+    }
+
+    /** Cada escritura: original -> final y el desenlace; "(prueba)" si se escribio durante una prueba. */
+    private PdfPTable writingsTable(List<ReportPdfDocument.WritingEntry> writings) {
+        if (writings.isEmpty()) {
+            return emptyState("No hay escrituras en este periodo.");
+        }
+        PdfPTable table = new PdfPTable(new float[] {0.9f, 2.4f, 2.4f, 1.3f});
+        table.setWidthPercentage(100);
+        table.setHeaderRows(1);
+        table.addCell(headerCell("Fecha"));
+        table.addCell(headerCell("Escribió"));
+        table.addCell(headerCell("Quedó"));
+        table.addCell(headerCell("Desenlace"));
+        for (ReportPdfDocument.WritingEntry writing : writings) {
+            table.addCell(bodyCell(WRITING_AT.format(writing.createdAt()), false));
+            table.addCell(bodyCell(writing.originalText(), false));
+            table.addCell(bodyCell(writing.finalText(), false));
+            table.addCell(bodyCell(writing.inTest() ? writing.outcomeLabel() + " (prueba)" : writing.outcomeLabel(), false));
+        }
         return table;
     }
 
@@ -127,34 +193,11 @@ public class SimplePdfGenerator {
         return paragraph;
     }
 
-    private PdfPTable topWordsTable(List<ReportPdfDocument.TopWordEntry> items) {
-        if (items.isEmpty()) {
-            return emptyState("No hay palabras recurrentes para este mes.");
-        }
-
-        PdfPTable table = new PdfPTable(new float[] {2.6f, 1.2f, 1.2f});
-        table.setWidthPercentage(100);
-        table.setHeaderRows(1);
-        table.addCell(headerCell("Palabra"));
-        table.addCell(headerCell("Frecuencia"));
-        table.addCell(headerCell("Aceptadas"));
-
-        for (ReportPdfDocument.TopWordEntry item : items) {
-            table.addCell(bodyCell(item.originalWord(), false));
-            table.addCell(bodyCell(String.valueOf(item.frequency()), true));
-            table.addCell(bodyCell(String.valueOf(item.acceptedCorrectionCount()), true));
-        }
-        return table;
-    }
-
     private PdfPTable notesBlock(String notes) {
         PdfPTable table = new PdfPTable(1);
         table.setWidthPercentage(100);
         PdfPCell cell = panelCell(new Color(252, 252, 255));
         cell.setPadding(16);
-        Paragraph title = new Paragraph("Observaciones del docente", CARD_LABEL_FONT);
-        title.setSpacingAfter(8);
-        cell.addElement(title);
         Paragraph body = new Paragraph(notes, BODY_FONT);
         body.setLeading(15);
         cell.addElement(body);
@@ -167,20 +210,18 @@ public class SimplePdfGenerator {
         table.setWidthPercentage(100);
         PdfPCell cell = panelCell(new Color(249, 251, 255));
         cell.setPadding(14);
-        Paragraph paragraph = new Paragraph(message,
-                FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 10, MUTED));
-        cell.addElement(paragraph);
+        cell.addElement(new Paragraph(message, FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 10, MUTED)));
         table.addCell(cell);
         return table;
     }
 
-    private PdfPCell metricCell(String label, String value, Color background) {
-        PdfPCell cell = panelCell(background);
+    private PdfPCell metricCell(String label, long value) {
+        PdfPCell cell = panelCell(PANEL);
         cell.setPadding(14);
         Paragraph labelParagraph = new Paragraph(label, CARD_LABEL_FONT);
         labelParagraph.setSpacingAfter(8);
         cell.addElement(labelParagraph);
-        cell.addElement(new Paragraph(value, CARD_VALUE_FONT));
+        cell.addElement(new Paragraph(String.valueOf(value), CARD_VALUE_FONT));
         return cell;
     }
 
@@ -194,7 +235,7 @@ public class SimplePdfGenerator {
     }
 
     private PdfPCell bodyCell(String text, boolean centered) {
-        PdfPCell cell = new PdfPCell(new Phrase(text, centered ? BODY_BOLD_FONT : BODY_FONT));
+        PdfPCell cell = new PdfPCell(new Phrase(text == null ? "" : text, centered ? BODY_BOLD_FONT : BODY_FONT));
         cell.setBorderColor(BORDER);
         cell.setPadding(8);
         cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
@@ -218,8 +259,7 @@ public class SimplePdfGenerator {
     }
 
     private Paragraph valueParagraph(String text, float size) {
-        Font font = FontFactory.getFont(FontFactory.HELVETICA_BOLD, size, INK);
-        Paragraph paragraph = new Paragraph(text, font);
+        Paragraph paragraph = new Paragraph(text, FontFactory.getFont(FontFactory.HELVETICA_BOLD, size, INK));
         paragraph.setSpacingAfter(4);
         return paragraph;
     }
@@ -256,39 +296,22 @@ public class SimplePdfGenerator {
                         new Phrase(document.title(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 24, INK)),
                         42, pageHeight - 72, 0);
                 ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                        new Phrase("Seguimiento pedagogico y consolidado mensual",
+                        new Phrase("Qué escribió el alumno, en qué se equivocó y qué hizo con la ayuda",
                                 FontFactory.getFont(FontFactory.HELVETICA, 11, MUTED)),
                         42, pageHeight - 96, 0);
                 ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                        new Phrase("Mes: " + document.monthLabel(),
+                        new Phrase("Periodo: " + document.periodLabel(),
                                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, INK)),
                         42, pageHeight - 118, 0);
-
-                PdfContentByte top = writer.getDirectContent();
-                top.saveState();
-                top.setColorFill(new Color(250, 250, 250));
-                top.roundRectangle(pageWidth - 182, pageHeight - 124, 140, 58, 10);
-                top.fill();
-                top.setColorStroke(BORDER);
-                top.roundRectangle(pageWidth - 182, pageHeight - 124, 140, 58, 10);
-                top.stroke();
-                top.restoreState();
-
-                ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                        new Phrase("Tasa de aceptacion", FontFactory.getFont(FontFactory.HELVETICA, 9, MUTED)),
-                        pageWidth - 166, pageHeight - 94, 0);
-                ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                        new Phrase(String.format(Locale.US, "%.2f%%", document.acceptanceRatePercentage()),
-                                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, INK)),
-                        pageWidth - 166, pageHeight - 114, 0);
             }
 
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                    new Phrase("Reporte mensual consolidado", FOOTER_BOLD_FONT), 42, 18, 0);
+                    new Phrase(document.title(), FOOTER_BOLD_FONT), 42, 18, 0);
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_RIGHT,
-                    new Phrase("Pagina " + writer.getPageNumber(), FOOTER_FONT), pageWidth - 42, 18, 0);
+                    new Phrase("Página " + writer.getPageNumber(), FOOTER_FONT), pageWidth - 42, 18, 0);
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                    new Phrase(document.monthCode() + " - " + document.studentAlias(), SMALL_FONT), 42, 6, 0);
+                    new Phrase(document.from() + "_" + document.to() + " - " + document.studentAlias(), SMALL_FONT),
+                    42, 6, 0);
         }
     }
 }

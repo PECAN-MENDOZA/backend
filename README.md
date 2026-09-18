@@ -50,8 +50,9 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 - `student`: pseudonymous student profiles and student self-service
 - `teacher`: encrypted teacher-student links
 - `correction`: correction sessions, word details, feedback, and AI adapter
-- `kpi`: acceptance rate, top words, and combined teacher dashboard
-- `report`: monthly report availability and PDF generation
+- `kpi`: acceptance rate, top words, and error types of one student in a period
+- `insights`: descriptive teacher panel (classroom activity, student errors/help/writings/tests, live tests) by period
+- `report`: period report PDF generation
 - `shared`: reusable DTOs, security helpers, and global error handling
 - `config`: JWT, CORS, typed properties, and HTTP client configuration
 
@@ -68,7 +69,11 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 | `GET` | `/api/v1/students/me` | Student |
 | `POST` | `/api/v1/corrections/process` | Student |
 | `PATCH` | `/api/v1/corrections/sessions/{id}/feedback` | Student |
-| `GET` | `/api/v1/kpis/students/{id}/summary?month=2026-05` | Teacher |
+| `GET` | `/api/v1/kpis/students/{id}/summary?from&to` | Teacher |
+| `GET` | `/api/v1/teachers/classrooms/{id}/activity?from&to` | Teacher |
+| `GET` | `/api/v1/teachers/students/{id}/errors?from&to` | Teacher |
+| `GET` | `/api/v1/teachers/tests/live` | Teacher |
+| `GET` | `/api/v1/reports/students/{id}/pdf?from&to` | Teacher |
 | `POST` | `/api/v1/research/tests` | Researcher |
 | `GET` | `/api/v1/research/tests/{id}/results` | Researcher |
 | `GET` | `/api/v1/research/tests/{id}/export.csv` | Researcher |
@@ -87,7 +92,8 @@ Teacher accounts have no public self-registration: a researcher creates them via
 which returns a temporary password once. See [docs/research-api.md](docs/research-api.md) for the full endpoint
 table, roles, and the sentence-test research workflow (drafting a test, assigning it, the student's
 Start/Finish-per-sentence flow, contextual correction during a test, and the bootstrap-based results and CSV
-export).
+export) and for the descriptive teacher panel by period (section 7: classroom activity, student errors, help and
+writings, live tests, period report PDF).
 
 ## Verify
 
@@ -97,7 +103,7 @@ export).
 
 ## Seed demo data
 
-To populate a local database with 1 teacher, 15 students, linked records, monthly reports, and 2 weeks of correction sessions:
+To populate a local database with 1 teacher, 15 students, linked records, and 2 weeks of correction sessions:
 
 ```powershell
 .\scripts\seed-demo.ps1

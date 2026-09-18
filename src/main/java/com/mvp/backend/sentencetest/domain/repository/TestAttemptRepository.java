@@ -24,4 +24,18 @@ public interface TestAttemptRepository extends JpaRepository<TestAttempt, UUID> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from TestAttempt a where a.id = :id")
     Optional<TestAttempt> findByIdForUpdate(@Param("id") UUID id);
+
+    // Intentos de un grupo de alumnos en un estado, con la prueba cargada (prueba en curso del panel docente).
+    @Query("select a from TestAttempt a join fetch a.test where a.student.id in :studentIds and a.status = :status")
+    List<TestAttempt> findByStudentIdInAndStatus(
+            @Param("studentIds") List<UUID> studentIds, @Param("status") AttemptStatus status);
+
+    // Intentos de un alumno en un estado, los terminados mas recientemente primero, con la prueba cargada.
+    @Query("""
+            select a from TestAttempt a join fetch a.test
+            where a.student.id = :studentId and a.status = :status
+            order by a.completedAt desc
+            """)
+    List<TestAttempt> findByStudentIdAndStatusOrderByCompletedAtDesc(
+            @Param("studentId") UUID studentId, @Param("status") AttemptStatus status);
 }

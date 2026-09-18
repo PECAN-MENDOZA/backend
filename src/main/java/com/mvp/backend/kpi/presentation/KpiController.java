@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
-import com.mvp.backend.kpi.application.dto.AcceptanceTrendResponse;
 import com.mvp.backend.kpi.application.dto.ErrorTypesResponse;
 import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
 import com.mvp.backend.kpi.application.dto.TopWordsResponse;
@@ -33,40 +32,35 @@ public class KpiController {
     public AcceptanceRateResponse acceptanceRate(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID studentId,
-            @RequestParam String month) {
-        return kpiService.acceptanceRate(UUID.fromString(jwt.getSubject()), studentId, month);
-    }
-
-    @GetMapping("/acceptance-trend")
-    public AcceptanceTrendResponse acceptanceTrend(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable UUID studentId,
-            @RequestParam String from,
-            @RequestParam String to) {
-        return kpiService.acceptanceTrend(UUID.fromString(jwt.getSubject()), studentId, from, to);
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return kpiService.acceptanceRate(UUID.fromString(jwt.getSubject()), studentId, from, to);
     }
 
     @GetMapping("/top-words")
     public TopWordsResponse topWords(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID studentId,
-            @RequestParam String month) {
-        return kpiService.topWords(UUID.fromString(jwt.getSubject()), studentId, month);
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return kpiService.topWords(UUID.fromString(jwt.getSubject()), studentId, from, to);
     }
 
     @GetMapping("/error-types")
     public ErrorTypesResponse errorTypes(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID studentId,
-            @RequestParam String month) {
-        return kpiService.errorTypes(UUID.fromString(jwt.getSubject()), studentId, month);
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return kpiService.errorTypes(UUID.fromString(jwt.getSubject()), studentId, from, to);
     }
 
     @GetMapping("/summary")
     public KpiSummaryResponse summary(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID studentId,
-            @RequestParam String month) {
-        return kpiService.summary(UUID.fromString(jwt.getSubject()), studentId, month);
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return kpiService.summary(UUID.fromString(jwt.getSubject()), studentId, from, to);
     }
 }

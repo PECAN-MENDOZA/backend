@@ -45,6 +45,19 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
 
     long countByTestResponseId(UUID testResponseId);
 
+    // Sesiones de un grupo de alumnos en [start, end), las mas recientes primero (panel del docente).
+    List<CorrectionSession> findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+            List<UUID> studentIds, Instant start, Instant end, Pageable pageable);
+
+    // Ultima actividad de cada alumno sin limite de periodo: filas [studentId, max(createdAt)].
+    @Query("""
+            select s.student.id, max(s.createdAt)
+            from CorrectionSession s
+            where s.student.id in :studentIds
+            group by s.student.id
+            """)
+    List<Object[]> lastActivityByStudent(@Param("studentIds") List<UUID> studentIds);
+
     @Query("""
             select count(session) as totalSessions,
                    sum(case when session.acceptedCorrection = true then 1 else 0 end) as acceptedSessions,
@@ -57,22 +70,6 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
               and session.createdAt < :end
             """)
     AcceptanceSummaryProjection acceptanceSummary(
-            @Param("studentId") UUID studentId,
-            @Param("start") Instant start,
-            @Param("end") Instant end);
-
-    @Query(value = """
-            select to_char(date_trunc('month', created_at at time zone 'UTC'), 'YYYY-MM') as month,
-                   count(*) as total,
-                   coalesce(sum(case when accepted_correction = true then 1 else 0 end), 0) as accepted
-            from correction_sessions
-            where student_id = :studentId
-              and created_at >= :start
-              and created_at < :end
-            group by month
-            order by month
-            """, nativeQuery = true)
-    List<Object[]> monthlyAcceptance(
             @Param("studentId") UUID studentId,
             @Param("start") Instant start,
             @Param("end") Instant end);

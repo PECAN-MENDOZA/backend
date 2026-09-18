@@ -8,7 +8,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record KpiSummaryResponse(
         @JsonProperty("id_estudiante") UUID studentId,
         String name,
-        String month,
+        String from,
+        String to,
         @JsonProperty("tasa_aceptacion") AcceptanceRateResponse acceptanceRate,
         @JsonProperty("top_palabras") List<TopWordItem> topWords) {
 }

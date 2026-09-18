@@ -15,10 +15,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.mvp.backend.report.application.dto.ReportAvailabilityResponse;
 import com.mvp.backend.report.application.dto.ReportPdfDownload;
 import com.mvp.backend.report.application.service.ReportService;
 
+/** Reporte del periodo en PDF para un alumno vinculado (from/to en Lima, como el resto del panel). */
 @RestController
 @RequestMapping("/api/v1/reports/students/{studentId}")
 @PreAuthorize("hasRole('TEACHER')")
@@ -30,20 +30,13 @@ public class ReportController {
         this.reportService = reportService;
     }
 
-    @GetMapping
-    public ReportAvailabilityResponse availability(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable UUID studentId,
-            @RequestParam String month) {
-        return reportService.availability(UUID.fromString(jwt.getSubject()), studentId, month);
-    }
-
     @GetMapping("/pdf")
     public ResponseEntity<byte[]> downloadPdf(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID studentId,
-            @RequestParam String month) {
-        ReportPdfDownload pdf = reportService.downloadPdf(UUID.fromString(jwt.getSubject()), studentId, month);
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        ReportPdfDownload pdf = reportService.downloadPdf(UUID.fromString(jwt.getSubject()), studentId, from, to);
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()

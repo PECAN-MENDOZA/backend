@@ -1,166 +1,88 @@
 package com.mvp.backend.report.application.service;
 
-import java.time.Instant;
-import java.time.YearMonth;
-import java.time.format.DateTimeParseException;
-import java.time.format.TextStyle;
-import java.util.ArrayList;
+import java.time.Clock;
 import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.mvp.backend.kpi.application.dto.AcceptanceRateResponse;
-import com.mvp.backend.kpi.application.dto.KpiSummaryResponse;
-import com.mvp.backend.kpi.application.dto.TopWordItem;
-import com.mvp.backend.kpi.application.service.KpiService;
-import com.mvp.backend.report.application.dto.ReportAvailabilityResponse;
+import com.mvp.backend.insights.application.dto.ErrorTypeBreakdown.WordPair;
+import com.mvp.backend.insights.application.dto.StudentErrorsResponse;
+import com.mvp.backend.insights.application.dto.StudentHelpResponse;
+import com.mvp.backend.insights.application.dto.StudentWritingItem;
+import com.mvp.backend.insights.application.service.StudentInsightsService;
+import com.mvp.backend.insights.application.service.TeacherAccess;
+import com.mvp.backend.insights.domain.Period;
 import com.mvp.backend.report.application.dto.ReportPdfDocument;
+import com.mvp.backend.report.application.dto.ReportPdfDocument.ErrorTypeSection;
+import com.mvp.backend.report.application.dto.ReportPdfDocument.HelpSummary;
+import com.mvp.backend.report.application.dto.ReportPdfDocument.WordEntry;
+import com.mvp.backend.report.application.dto.ReportPdfDocument.WritingEntry;
 import com.mvp.backend.report.application.dto.ReportPdfDownload;
-import com.mvp.backend.report.domain.model.MonthlyReport;
-import com.mvp.backend.report.domain.repository.MonthlyReportRepository;
 import com.mvp.backend.report.infrastructure.pdf.SimplePdfGenerator;
-import com.mvp.backend.shared.exception.BusinessException;
-import com.mvp.backend.shared.exception.NotFoundException;
-import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
-import com.mvp.backend.teacher.domain.repository.TeacherRepository;
-import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
+/** "Reporte del periodo" en PDF: la misma ficha descriptiva del alumno que ve el docente, para imprimir. */
 @Service
 public class ReportService {
 
-    private final KpiService kpiService;
-    private final MonthlyReportRepository monthlyReportRepository;
-    private final TeacherStudentLinkRepository linkRepository;
-    private final TeacherRepository teacherRepository;
+    static final String TITLE = "Reporte del periodo";
+    static final int EXAMPLES_PER_TYPE = 3;
+    static final int LAST_WRITINGS = 20;
+
+    private final TeacherAccess access;
+    private final StudentInsightsService insights;
     private final SimplePdfGenerator pdfGenerator;
+    private final Clock clock;
 
     public ReportService(
-            KpiService kpiService,
-            MonthlyReportRepository monthlyReportRepository,
-            TeacherStudentLinkRepository linkRepository,
-            TeacherRepository teacherRepository,
-            SimplePdfGenerator pdfGenerator) {
-        this.kpiService = kpiService;
-        this.monthlyReportRepository = monthlyReportRepository;
-        this.linkRepository = linkRepository;
-        this.teacherRepository = teacherRepository;
+            TeacherAccess access,
+            StudentInsightsService insights,
+            SimplePdfGenerator pdfGenerator,
+            Clock clock) {
+        this.access = access;
+        this.insights = insights;
         this.pdfGenerator = pdfGenerator;
+        this.clock = clock;
     }
 
     @Transactional(readOnly = true)
-    public ReportAvailabilityResponse availability(UUID teacherId, UUID studentId, String month) {
-        YearMonth parsedMonth = parseMonth(month);
-        KpiSummaryResponse summary = kpiService.summary(
-                teacherId, studentId, parsedMonth.atDay(1).toString(), parsedMonth.atEndOfMonth().toString());
-        TeacherStudentLink link = requireLink(teacherId, studentId);
-        Optional<MonthlyReport> snapshot = monthlyReportRepository.findByStudentIdAndMonth(studentId, parsedMonth.atDay(1));
-        boolean available = snapshot.isPresent() || summary.acceptanceRate().totalSubmissions() > 0;
-        String filename = available ? filename(summary.name(), parsedMonth) : null;
-        return new ReportAvailabilityResponse(
-                studentId,
+    public ReportPdfDownload downloadPdf(UUID teacherId, UUID studentId, String from, String to) {
+        TeacherStudentLink link = access.link(teacherId, studentId);
+        Period period = Period.parse(from, to, clock);
+
+        StudentHelpResponse help = insights.help(teacherId, studentId, from, to);
+        StudentErrorsResponse errors = insights.errors(teacherId, studentId, from, to);
+        List<StudentWritingItem> writings = insights.writings(teacherId, studentId, from, to, LAST_WRITINGS);
+
+        ReportPdfDocument document = new ReportPdfDocument(
+                TITLE,
+                access.realName(link),
                 link.getStudent().getUsername(),
-                summary.name(),
-                parsedMonth.toString(),
-                available,
-                snapshot.isPresent() ? "HISTORICAL_SNAPSHOT" : "LIVE_KPI",
-                snapshot.map(MonthlyReport::getGeneratedAt).orElse(null),
-                filename);
+                link.getTeacher().getUsername(),
+                period.label(),
+                period.from().toString(),
+                period.to().toString(),
+                clock.instant(),
+                new HelpSummary(help.total(), help.edited(), help.accepted(), help.rejected(), help.undone(),
+                        help.unanswered()),
+                errors.types().stream()
+                        .map(type -> new ErrorTypeSection(type.label(), type.count(),
+                                words(type.examples().stream().limit(EXAMPLES_PER_TYPE).toList())))
+                        .toList(),
+                words(errors.practiceWords()),
+                writings.stream()
+                        .map(item -> new WritingEntry(item.createdAt(), item.originalText(), item.finalText(),
+                                item.outcomeLabel(), item.inTest()))
+                        .toList(),
+                link.getNotes());
+
+        String filename = "reporte-" + link.getStudent().getUsername() + "-" + period.from() + "_" + period.to() + ".pdf";
+        return new ReportPdfDownload(filename, pdfGenerator.generate(document));
     }
 
-    @Transactional(readOnly = true)
-    public ReportPdfDownload downloadPdf(UUID teacherId, UUID studentId, String month) {
-        YearMonth parsedMonth = parseMonth(month);
-        KpiSummaryResponse summary = kpiService.summary(
-                teacherId, studentId, parsedMonth.atDay(1).toString(), parsedMonth.atEndOfMonth().toString());
-        TeacherStudentLink link = requireLink(teacherId, studentId);
-        Optional<MonthlyReport> snapshot = monthlyReportRepository.findByStudentIdAndMonth(studentId, parsedMonth.atDay(1));
-
-        if (summary.acceptanceRate().totalSubmissions() == 0 && snapshot.isEmpty()) {
-            throw new NotFoundException("Report not found for requested month");
-        }
-
-        Teacher teacher = teacherRepository.findById(teacherId)
-                .orElseThrow(() -> new NotFoundException("Teacher not found"));
-
-        Instant generatedAt = snapshot.map(MonthlyReport::getGeneratedAt).orElseGet(Instant::now);
-        String filename = filename(summary.name(), parsedMonth);
-        byte[] content = pdfGenerator.generate(
-                buildPdfDocument(link, teacher, summary, parsedMonth, generatedAt, snapshot.isPresent()));
-        return new ReportPdfDownload(filename, content);
-    }
-
-    private ReportPdfDocument buildPdfDocument(
-            TeacherStudentLink link,
-            Teacher teacher,
-            KpiSummaryResponse summary,
-            YearMonth month,
-            Instant generatedAt,
-            boolean historicalSnapshot) {
-        AcceptanceRateResponse acceptance = summary.acceptanceRate();
-        return new ReportPdfDocument(
-                "Reporte mensual consolidado",
-                summary.name(),
-                link.getStudent().getUsername(),
-                teacher.getUsername(),
-                monthLabel(month.toString()),
-                month.toString(),
-                historicalSnapshot ? "Snapshot historico cerrado" : "Resumen KPI en tiempo real",
-                generatedAt,
-                acceptance.acceptanceRatePercentage(),
-                acceptance.totalSubmissions(),
-                acceptance.totalAccepted(),
-                acceptance.totalRejected(),
-                acceptance.unanswered(),
-                buildTopWords(summary.topWords()),
-                link.getNotes() == null || link.getNotes().isBlank() ? "Sin notas disponibles." : link.getNotes());
-    }
-
-    private List<ReportPdfDocument.TopWordEntry> buildTopWords(List<TopWordItem> items) {
-        List<ReportPdfDocument.TopWordEntry> words = new ArrayList<>();
-        for (TopWordItem item : items) {
-            words.add(new ReportPdfDocument.TopWordEntry(
-                    item.originalWord(),
-                    item.frequency(),
-                    item.acceptedCorrectionCount()));
-        }
-        return words;
-    }
-
-    private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {
-        return linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId)
-                .orElseThrow(() -> new com.mvp.backend.shared.exception.ForbiddenException(
-                        "Teacher does not have access to this student"));
-    }
-
-    private YearMonth parseMonth(String month) {
-        try {
-            return YearMonth.parse(month);
-        } catch (DateTimeParseException exception) {
-            throw new BusinessException("Month must use YYYY-MM format");
-        }
-    }
-
-    private String filename(String studentName, YearMonth month) {
-        return "reporte-" + slugify(studentName) + "-" + month + ".pdf";
-    }
-
-    private String slugify(String value) {
-        String normalized = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
-                .replaceAll("\\p{M}+", "")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-|-$)", "");
-        return normalized.isBlank() ? "estudiante" : normalized;
-    }
-
-    private String monthLabel(String month) {
-        YearMonth parsedMonth = YearMonth.parse(month);
-        return parsedMonth.getMonth().getDisplayName(TextStyle.FULL, new Locale("es", "PE"))
-                + " " + parsedMonth.getYear();
+    private static List<WordEntry> words(List<WordPair> pairs) {
+        return pairs.stream().map(pair -> new WordEntry(pair.original(), pair.corrected(), pair.count())).toList();
     }
 }

@@ -16,6 +16,11 @@ public final class AutoErrorDetail {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String INCIDENTS = "incidents";
+    private static final String EDITS = "edits";
+
+    /** Una operacion del alineador: tipo (SUSTITUCION, OMISION, ...), palabra esperada y palabra escrita. */
+    public record Edit(String type, String expected, String written) {
+    }
 
     private AutoErrorDetail() {
     }
@@ -33,6 +38,25 @@ public final class AutoErrorDetail {
             return List.of();
         }
         return incidentsOf(parse(detail)).valueStream().map(JsonNode::asString).toList();
+    }
+
+    /** Operaciones del alineador presentes en el detalle (vacio si es nulo o aun no se alineo la oracion). */
+    public static List<Edit> edits(String detail) {
+        if (detail == null) {
+            return List.of();
+        }
+        JsonNode edits = parse(detail).get(EDITS);
+        if (!(edits instanceof ArrayNode array)) {
+            return List.of();
+        }
+        return array.valueStream()
+                .map(node -> new Edit(text(node, "type"), text(node, "expected"), text(node, "written")))
+                .toList();
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asString();
     }
 
     /** Detalle del alineador mas las incidencias que ya tuviera la respuesta (no se pierden al terminar). */

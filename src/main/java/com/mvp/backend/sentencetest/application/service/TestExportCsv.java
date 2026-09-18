@@ -63,7 +63,7 @@ public final class TestExportCsv {
     }
 
     /** AUTO en dictadas, ANNOTATED en libres anotadas y PENDING en libres sin anotar. */
-    static String errorSource(TestResponse response) {
+    public static String errorSource(TestResponse response) {
         if (response.getSentence().getKind() == SentenceKind.DICTATED) {
             return "AUTO";
         }

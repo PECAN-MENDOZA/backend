@@ -88,7 +88,7 @@ class ClassroomInsightsServiceTests {
 
     private void ownClassroomWithLinks() {
         when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
-        when(linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId())).thenReturn(links);
+        when(linkRepository.findActiveWithStudentByClassroomId(classroom.getId())).thenReturn(links);
     }
 
     @Test
@@ -243,7 +243,7 @@ class ClassroomInsightsServiceTests {
     @Test
     void classroomWithoutStudentsReturnsEmptyResultsWithoutQuerying() {
         when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
-        when(linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId())).thenReturn(List.of());
+        when(linkRepository.findActiveWithStudentByClassroomId(classroom.getId())).thenReturn(List.of());
 
         assertThat(service.activity(teacherId, classroom.getId(), DAY, DAY).students()).isEmpty();
         assertThat(service.recentCorrections(teacherId, classroom.getId(), DAY, DAY, 10)).isEmpty();

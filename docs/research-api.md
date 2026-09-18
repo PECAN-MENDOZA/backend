@@ -2,7 +2,8 @@
 
 Flujo de pruebas de oraciones con el backend solo: cuenta de investigador, docentes y salones, redacción y
 asignación de una prueba, la sesión del alumno desde el teclado (Comenzar/Terminar por oración), la corrección
-contextual ligada a la oración en curso, resultados con intervalos bootstrap deterministas y exportación CSV.
+contextual ligada a la oración en curso, resultados con intervalos bootstrap deterministas y exportación CSV; al
+final, el panel descriptivo del docente por periodo (sección 7).
 Cubierto de punta a punta por `src/test/java/com/mvp/backend/sentencetest/presentation/ResearchTestApiTests.java`
 y `StudentTestAuthorizationTests.java` (`.\mvnw.cmd -q "-Dtest=ResearchTestApiTests" test`), que recorren este
 mismo orden sobre la cadena de seguridad real (JWT emitidos por los endpoints de login) y comprueban que ninguna
@@ -281,3 +282,46 @@ sobre la misma cohorte y el mismo `TestExportCsv.build`.
 `TESTS_MIN_SAMPLE`). `provenance` trae las versiones distintas y ordenadas de modelo, app y backend vistas en
 los intentos analizados (no incluye los excluidos). `computedAt` es la hora del cálculo, no la de cierre de la
 prueba.
+
+## 7. Panel del docente (periodo)
+
+El panel del docente es una **instantánea descriptiva**: qué escribió cada alumno, en qué se equivocó y qué hizo
+con la ayuda del teclado, por salón o por alumno, en un día o en un rango de fechas. **Describe, no evalúa**: ninguna
+respuesta de estas rutas trae series temporales, comparaciones entre periodos, porcentajes de cambio ni estados
+evaluativos ("mejoró", "en riesgo"); solo cuenta y lista. Todas exigen `TEACHER` y comprueban la propiedad del salón
+(`classrooms.teacher_id`) o el vínculo activo con el alumno (`teacher_student_links.deleted_at IS NULL`); si no,
+`403`. El nombre real del alumno (`realName`) se descifra únicamente a través de ese vínculo.
+
+**Periodo.** `from` y `to` son fechas `YYYY-MM-DD` inclusivas en `America/Lima` (`Period`): `from` ausente ⇒ hoy;
+`to` ausente ⇒ `from`; `to < from` o más de 92 días ⇒ `400`. Se convierten a `[inicio, fin)` en UTC para las
+consultas. Las correcciones pedidas durante una prueba de oraciones **sí cuentan** y se marcan `inTest = true`
+con la `assistance` de la oración (`ASSISTED`/`UNASSISTED`).
+
+**Desenlace** (`Outcome`) de cada corrección, derivado de columnas existentes de `correction_sessions`:
+`accepted_correction = true` y `was_edited` ⇒ `EDITED` ("Resolvió solo"); `true` ⇒ `ACCEPTED` ("Aceptó");
+`false` con `feedback_reason = UNDO` ⇒ `UNDONE` ("Deshizo"); `false` ⇒ `REJECTED` ("Rechazó"); `null` ⇒
+`UNANSWERED` ("Sin respuesta"). `finalText` es `final_text` si existe; si no, la sugerencia elegida cuando la
+aceptó; si no, el texto original.
+
+| Método | Ruta | Parámetros | Respuesta |
+|---|---|---|---|
+| `GET` | `/api/v1/teachers/classrooms/{classroomId}/activity` | `from?`, `to?` | `200 ClassroomActivityResponse{classroomId, classroomName, from, to, students[{studentId, username, realName, lastActivityAt, correctionsInPeriod, outcomes{edited, accepted, rejected, undone, unanswered}}]}`; más correcciones primero, luego actividad más reciente; `lastActivityAt` no se limita al periodo |
+| `GET` | `/api/v1/teachers/classrooms/{classroomId}/corrections/recent` | `from?`, `to?`, `limit?` (50; 1–200) | `200 List<RecentCorrectionItem{sessionId, studentId, username, realName, createdAt, originalText, correctedText, finalText, outcome, outcomeLabel, inTest, assistance}>` más recientes primero |
+| `GET` | `/api/v1/teachers/classrooms/{classroomId}/errors` | `from?`, `to?` | `200 ClassroomErrorsResponse{classroomId, from, to, total, types[{type, label, count, topWords[{original, corrected, count}] (máx. 5)}]}` |
+| `GET` | `/api/v1/teachers/students/{studentId}/errors` | `from?`, `to?` | `200 StudentErrorsResponse{studentId, from, to, total, types[{type, label, count, examples[{original, corrected, count}] (máx. 5)}], practiceWords[{original, corrected, count}]}`; `practiceWords` = pares con `count ≥ 2`, máx. 20, por `count` desc |
+| `GET` | `/api/v1/teachers/students/{studentId}/help` | `from?`, `to?` | `200 StudentHelpResponse{studentId, from, to, total, edited, accepted, rejected, undone, unanswered, editedPct, acceptedPct, rejectedPct, undonePct, unansweredPct}`; porcentajes sobre `total` (2 decimales), `0` si `total = 0` |
+| `GET` | `/api/v1/teachers/students/{studentId}/writings` | `from?`, `to?`, `limit?` (100; 1–200) | `200 List<StudentWritingItem{sessionId, createdAt, originalText, finalText, outcome, outcomeLabel, inTest, assistance, testCode}>` más recientes primero |
+| `GET` | `/api/v1/teachers/students/{studentId}/tests` | — | `200 List<StudentTestSummary{attemptId, testCode, testTitle, completedAt, excluded, sentences[{position, kind, assistance, referenceText, finalText, skipped, errorCount, errorSource, edits[{type, expected, written}], durationFromFirstKeyMs}]}>`; solo intentos `COMPLETED` (los excluidos por el investigador con `excluded = true`; los cancelados no aparecen), terminados más recientemente primero |
+| `GET` | `/api/v1/teachers/tests/live` | — | `200 List<LiveAttemptItem{attemptId, studentId, username, realName, classroomId, classroomName, testCode, testTitle, currentPosition, sentenceCount, startedAt}>`: intentos `IN_PROGRESS` de los alumnos vinculados activos del docente, quien empezó antes primero; `currentPosition` = oraciones terminadas + 1 |
+| `GET` | `/api/v1/reports/students/{studentId}/pdf` | `from?`, `to?` | `200 application/pdf` (`Content-Disposition: attachment; filename="reporte-<username>-<from>_<to>.pdf"`): "Reporte del periodo" con nombre del alumno, periodo, resumen de ayuda, errores por tipo con hasta 3 ejemplos, palabras para practicar y las últimas 20 escrituras (`original -> final · desenlace`). Sin gráficos ni tendencias |
+| `GET` | `/api/v1/kpis/students/{studentId}/summary`, `/acceptance-rate`, `/top-words`, `/error-types` | `from?`, `to?` | KPIs históricos del alumno en el mismo periodo (`from`/`to` en la respuesta) |
+
+En `/tests`, `errorCount` es el efectivo (automático en dictado, anotado en libre; `null` si falta anotar),
+`errorSource` es `AUTO`/`ANNOTATED`/`PENDING` (sección 6.1) y `edits` son las operaciones del alineador leídas de
+`test_responses.auto_error_detail` (`SUSTITUCION`, `OMISION`, `INSERCION`, `UNION`, `SEPARACION`).
+
+**Escala.** `activity` carga las sesiones del salón del periodo y agrega los desenlaces en memoria (a lo sumo 92
+días de un salón, la escala de la tesis); `help` hace lo mismo por alumno. Si el volumen creciera, ambas pueden
+pasar a una agregación JPQL sin cambiar la respuesta. La disponibilidad de reportes mensuales
+(`GET /api/v1/reports/students/{id}?month=`) y la tabla `monthly_reports` se retiraron (`V14`): el PDF se genera
+siempre a partir de las mismas consultas del panel.

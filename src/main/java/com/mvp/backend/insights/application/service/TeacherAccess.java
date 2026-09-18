@@ -42,9 +42,14 @@ public class TeacherAccess {
                 .orElseThrow(() -> new ForbiddenException("Teacher does not have access to this student"));
     }
 
-    /** Vinculos activos del salon en orden de creacion; se llama tras comprobar la propiedad del salon. */
+    /** Vinculos activos del salon en orden de creacion, con el alumno cargado; se llama tras comprobar la propiedad del salon. */
     public List<TeacherStudentLink> activeLinks(UUID classroomId) {
-        return linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroomId);
+        return linkRepository.findActiveWithStudentByClassroomId(classroomId);
+    }
+
+    /** Vinculos activos del docente en todos sus salones, con alumno y salon cargados. */
+    public List<TeacherStudentLink> activeLinksOfTeacher(UUID teacherId) {
+        return linkRepository.findActiveWithStudentAndClassroomByTeacherId(teacherId);
     }
 
     public List<UUID> activeStudentIds(UUID classroomId) {

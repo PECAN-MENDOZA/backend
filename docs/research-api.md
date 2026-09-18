@@ -22,8 +22,9 @@ recibe 403 incluso en una ruta inexistente bajo esos prefijos.
 
 Sin token: 401. Un docente con contraseña temporal (`mustChangePassword = true` en la respuesta de login, es decir,
 recién creado o con contraseña restablecida por el investigador) recibe `403 {"message":"Password change required"}`
-en **toda** ruta hasta que llame a `POST /api/v1/auth/teachers/change-password`; ese es el único endpoint que se le
-permite mientras tanto (el filtro se evalúa después de las reglas de rol, así que un 401/403 de rol prevalece). Del lado del investigador, un intento de otra prueba se reporta como `404 "Attempt not found"`
+en **toda** ruta hasta que llame a `POST /api/v1/auth/teachers/change-password`; mientras tanto solo se le permiten
+los `POST` de `/api/v1/auth/**` (cambiar la contraseña o volver a iniciar sesión). El filtro se evalúa después de las
+reglas de rol, así que un 401/403 de rol prevalece. Del lado del investigador, un intento de otra prueba se reporta como `404 "Attempt not found"`
 igual que uno inexistente (no distingue "ajeno" de "inexistente", para no filtrar su existencia). Del lado del
 alumno, un intento o una respuesta de otro alumno responde `403` (existe, pero no es suyo) mientras que uno
 inexistente responde `404`. El investigador nunca ve el nombre real de un alumno: solo su `username` pseudónimo.

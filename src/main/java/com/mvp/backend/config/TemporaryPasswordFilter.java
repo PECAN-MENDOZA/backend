@@ -32,7 +32,7 @@ public class TemporaryPasswordFilter extends OncePerRequestFilter {
 
     static final String MESSAGE = "Password change required";
     private static final String TEACHER_AUTHORITY = "ROLE_TEACHER";
-    private static final String CHANGE_PASSWORD_PATH = "/api/v1/auth/teachers/change-password";
+    private static final String AUTH_PREFIX = "/api/v1/auth/";
 
     private final TeacherRepository teacherRepository;
     private final ObjectMapper objectMapper;
@@ -46,12 +46,13 @@ public class TemporaryPasswordFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (!isTeacher(authentication) || isChangePassword(request) || !mustChangePassword(authentication)) {
+        if (!isTeacher(authentication) || isAuthRoute(request) || !mustChangePassword(authentication)) {
             chain.doFilter(request, response);
             return;
         }
         response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
         ApiError body = new ApiError(
                 Instant.now(),
                 HttpStatus.FORBIDDEN.value(),
@@ -69,8 +70,19 @@ public class TemporaryPasswordFilter extends OncePerRequestFilter {
                         .anyMatch(authority -> TEACHER_AUTHORITY.equals(authority.getAuthority()));
     }
 
-    private static boolean isChangePassword(HttpServletRequest request) {
-        return HttpMethod.POST.matches(request.getMethod()) && CHANGE_PASSWORD_PATH.equals(request.getRequestURI());
+    /**
+     * Las rutas de autenticacion no se bloquean: el cambio de contrasena es la salida del estado
+     * temporal y un login con un bearer viejo debe seguir emitiendo un token nuevo.
+     */
+    private static boolean isAuthRoute(HttpServletRequest request) {
+        return HttpMethod.POST.matches(request.getMethod()) && path(request).startsWith(AUTH_PREFIX);
+    }
+
+    /** Ruta sin el context-path del servidor, para que la exencion no dependa de la configuracion. */
+    private static String path(HttpServletRequest request) {
+        String servletPath = request.getServletPath();
+        String pathInfo = request.getPathInfo();
+        return pathInfo == null ? servletPath : servletPath + pathInfo;
     }
 
     /** Un subject que no es UUID o sin fila de docente no bloquea: el resto de la cadena responde como antes. */

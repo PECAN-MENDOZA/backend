@@ -63,6 +63,18 @@ class TemporaryPasswordFilterTests {
     }
 
     @Test
+    void staleTemporaryBearerDoesNotBlockLogin() throws Exception {
+        // Un cliente que aun envia el bearer temporal debe poder volver a iniciar sesion.
+        String email = teacherRepository.findById(temporaryTeacherId).orElseThrow().getEmail();
+        mockMvc.perform(post("/api/v1/auth/teachers/login")
+                        .with(teacher(temporaryTeacherId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"Temporary23\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mustChangePassword").value(true));
+    }
+
+    @Test
     void teacherWithOwnPasswordIsNotAffected() throws Exception {
         mockMvc.perform(get("/api/v1/teachers/classrooms").with(teacher(settledTeacherId)))
                 .andExpect(status().isOk());

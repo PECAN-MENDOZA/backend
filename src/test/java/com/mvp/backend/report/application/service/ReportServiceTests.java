@@ -69,7 +69,7 @@ class ReportServiceTests {
         UUID studentId = UUID.randomUUID();
         TeacherStudentLink link = link(studentId, "student_01", "Nicolas Herrera");
 
-        when(kpiService.summary(teacherId, studentId, "2026-05"))
+        when(kpiService.summary(teacherId, studentId, "2026-05-01", "2026-05-31"))
                 .thenReturn(summary(studentId, "Nicolas Herrera", 0, 0, 0, 0));
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -89,7 +89,7 @@ class ReportServiceTests {
         TeacherStudentLink link = link(studentId, "student_02", "Nicolas Herrera");
         MonthlyReport snapshot = mock(MonthlyReport.class);
 
-        when(kpiService.summary(teacherId, studentId, "2026-05"))
+        when(kpiService.summary(teacherId, studentId, "2026-05-01", "2026-05-31"))
                 .thenReturn(summary(studentId, "Nicolas Herrera", 0, 0, 0, 0));
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -111,7 +111,7 @@ class ReportServiceTests {
         UUID studentId = UUID.randomUUID();
         TeacherStudentLink link = link(studentId, "student_03", "Nicolas Herrera");
 
-        when(kpiService.summary(teacherId, studentId, "2026-05"))
+        when(kpiService.summary(teacherId, studentId, "2026-05-01", "2026-05-31"))
                 .thenReturn(summary(studentId, "Nicolas Herrera", 0, 0, 0, 0));
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -131,7 +131,7 @@ class ReportServiceTests {
         TeacherStudentLink link = link(studentId, "student_04", "Nicolas Herrera");
         byte[] pdfBytes = new byte[] {1, 2, 3};
 
-        when(kpiService.summary(teacherId, studentId, "2026-05"))
+        when(kpiService.summary(teacherId, studentId, "2026-05-01", "2026-05-31"))
                 .thenReturn(summary(studentId, "Nicolas Herrera", 14, 11, 3, 0));
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
@@ -163,9 +163,10 @@ class ReportServiceTests {
         return new KpiSummaryResponse(
                 studentId,
                 name,
-                "2026-05",
-                new AcceptanceRateResponse(studentId, "2026-05", totalSubmissions, totalAccepted, totalRejected, unanswered,
-                        0, totalSubmissions == 0 ? 0 : 78.57),
+                "2026-05-01",
+                "2026-05-31",
+                new AcceptanceRateResponse(studentId, "2026-05-01", "2026-05-31", totalSubmissions, totalAccepted,
+                        totalRejected, unanswered, 0, totalSubmissions == 0 ? 0 : 78.57),
                 List.of(new TopWordItem("ermano", 2, 2)));
     }
 }

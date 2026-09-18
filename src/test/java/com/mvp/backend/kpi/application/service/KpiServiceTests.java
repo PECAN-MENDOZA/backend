@@ -3,7 +3,9 @@ package com.mvp.backend.kpi.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,6 +27,9 @@ import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 @ExtendWith(MockitoExtension.class)
 class KpiServiceTests {
 
+    // Reloj fijo, no usado por estos tests salvo por el constructor (siempre se pasan from/to explicitos).
+    private final Clock clock = Clock.fixed(Instant.parse("2026-05-15T12:00:00Z"), ZoneOffset.UTC);
+
     @Mock
     private CorrectionSessionRepository sessionRepository;
 
@@ -41,7 +46,7 @@ class KpiServiceTests {
 
     @BeforeEach
     void setUp() {
-        kpiService = new KpiService(sessionRepository, wordCorrectionRepository, linkRepository, personalDataCipher);
+        kpiService = new KpiService(sessionRepository, wordCorrectionRepository, linkRepository, personalDataCipher, clock);
     }
 
     @Test
@@ -55,12 +60,15 @@ class KpiServiceTests {
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
-        when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T00:00:00Z"),
-                Instant.parse("2026-06-01T00:00:00Z")))
+        // Rango 2026-05-01..2026-05-31 en Lima (UTC-5): [2026-05-01T05:00Z, 2026-06-01T05:00Z).
+        when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T05:00:00Z"),
+                Instant.parse("2026-06-01T05:00:00Z")))
                 .thenReturn(new AcceptanceSummaryProjectionStub(20L, 12L, 5L, 3L, 4L));
 
-        var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05");
+        var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05-01", "2026-05-31");
 
+        assertThat(response.from()).isEqualTo("2026-05-01");
+        assertThat(response.to()).isEqualTo("2026-05-31");
         assertThat(response.totalSubmissions()).isEqualTo(20);
         assertThat(response.totalAccepted()).isEqualTo(12);
         assertThat(response.totalRejected()).isEqualTo(5);
@@ -80,11 +88,11 @@ class KpiServiceTests {
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
-        when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T00:00:00Z"),
-                Instant.parse("2026-06-01T00:00:00Z")))
+        when(sessionRepository.acceptanceSummary(studentId, Instant.parse("2026-05-01T05:00:00Z"),
+                Instant.parse("2026-06-01T05:00:00Z")))
                 .thenReturn(new AcceptanceSummaryProjectionStub(0L, null, null, null, null));
 
-        var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05");
+        var response = kpiService.acceptanceRate(teacherId, studentId, "2026-05-01", "2026-05-31");
 
         assertThat(response.totalSubmissions()).isZero();
         assertThat(response.totalAccepted()).isZero();
@@ -105,15 +113,17 @@ class KpiServiceTests {
 
         when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
                 .thenReturn(Optional.of(link));
-        when(wordCorrectionRepository.wordPairsForMonth(studentId, Instant.parse("2026-05-01T00:00:00Z"),
-                Instant.parse("2026-06-01T00:00:00Z")))
+        when(wordCorrectionRepository.wordPairsForMonth(studentId, Instant.parse("2026-05-01T05:00:00Z"),
+                Instant.parse("2026-06-01T05:00:00Z")))
                 .thenReturn(java.util.List.of(
                         new Object[] {"jugo", "jugó"},     // TILDE
                         new Object[] {"cancion", "canción"}, // TILDE
                         new Object[] {"bamos", "vamos"}));   // CONFUSION_B_V
 
-        var response = kpiService.errorTypes(teacherId, studentId, "2026-05");
+        var response = kpiService.errorTypes(teacherId, studentId, "2026-05-01", "2026-05-31");
 
+        assertThat(response.from()).isEqualTo("2026-05-01");
+        assertThat(response.to()).isEqualTo("2026-05-31");
         assertThat(response.totalErrors()).isEqualTo(3);
         assertThat(response.errorTypes()).hasSize(2);
         // Ordenado por frecuencia descendente: TILDE (2) primero.
@@ -122,36 +132,6 @@ class KpiServiceTests {
         assertThat(response.errorTypes().get(0).percentage()).isEqualTo(66.67);
         assertThat(response.errorTypes().get(1).errorType()).isEqualTo("CONFUSION_B_V");
         assertThat(response.errorTypes().get(1).count()).isEqualTo(1);
-    }
-
-    @Test
-    void buildsAcceptanceTrendFillingMissingMonths() {
-        UUID teacherId = UUID.randomUUID();
-        UUID studentId = UUID.randomUUID();
-        Teacher teacher = new Teacher("teacher_04", "teacher4@school.edu", null, "School", "encoded");
-        Student student = new Student("student_04", "School", "encoded");
-        TeacherStudentLink link = new TeacherStudentLink(
-                teacher, student, new Classroom(teacher, "3.º B"), "encrypted-name", null);
-
-        when(linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId))
-                .thenReturn(Optional.of(link));
-        when(sessionRepository.monthlyAcceptance(studentId, Instant.parse("2026-03-01T00:00:00Z"),
-                Instant.parse("2026-06-01T00:00:00Z")))
-                .thenReturn(java.util.List.of(
-                        new Object[] {"2026-03", 10L, 6L},
-                        new Object[] {"2026-05", 4L, 4L}));
-
-        var response = kpiService.acceptanceTrend(teacherId, studentId, "2026-03", "2026-05");
-
-        assertThat(response.series()).hasSize(3);
-        assertThat(response.series().get(0).month()).isEqualTo("2026-03");
-        assertThat(response.series().get(0).percentage()).isEqualTo(60.0);
-        // Abril no tiene datos: se rellena con ceros.
-        assertThat(response.series().get(1).month()).isEqualTo("2026-04");
-        assertThat(response.series().get(1).total()).isZero();
-        assertThat(response.series().get(1).percentage()).isZero();
-        assertThat(response.series().get(2).month()).isEqualTo("2026-05");
-        assertThat(response.series().get(2).percentage()).isEqualTo(100.0);
     }
 
     private record AcceptanceSummaryProjectionStub(

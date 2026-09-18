@@ -55,7 +55,8 @@ public class ReportService {
     @Transactional(readOnly = true)
     public ReportAvailabilityResponse availability(UUID teacherId, UUID studentId, String month) {
         YearMonth parsedMonth = parseMonth(month);
-        KpiSummaryResponse summary = kpiService.summary(teacherId, studentId, parsedMonth.toString());
+        KpiSummaryResponse summary = kpiService.summary(
+                teacherId, studentId, parsedMonth.atDay(1).toString(), parsedMonth.atEndOfMonth().toString());
         TeacherStudentLink link = requireLink(teacherId, studentId);
         Optional<MonthlyReport> snapshot = monthlyReportRepository.findByStudentIdAndMonth(studentId, parsedMonth.atDay(1));
         boolean available = snapshot.isPresent() || summary.acceptanceRate().totalSubmissions() > 0;
@@ -74,7 +75,8 @@ public class ReportService {
     @Transactional(readOnly = true)
     public ReportPdfDownload downloadPdf(UUID teacherId, UUID studentId, String month) {
         YearMonth parsedMonth = parseMonth(month);
-        KpiSummaryResponse summary = kpiService.summary(teacherId, studentId, parsedMonth.toString());
+        KpiSummaryResponse summary = kpiService.summary(
+                teacherId, studentId, parsedMonth.atDay(1).toString(), parsedMonth.atEndOfMonth().toString());
         TeacherStudentLink link = requireLink(teacherId, studentId);
         Optional<MonthlyReport> snapshot = monthlyReportRepository.findByStudentIdAndMonth(studentId, parsedMonth.atDay(1));
 
@@ -87,7 +89,8 @@ public class ReportService {
 
         Instant generatedAt = snapshot.map(MonthlyReport::getGeneratedAt).orElseGet(Instant::now);
         String filename = filename(summary.name(), parsedMonth);
-        byte[] content = pdfGenerator.generate(buildPdfDocument(link, teacher, summary, generatedAt, snapshot.isPresent()));
+        byte[] content = pdfGenerator.generate(
+                buildPdfDocument(link, teacher, summary, parsedMonth, generatedAt, snapshot.isPresent()));
         return new ReportPdfDownload(filename, content);
     }
 
@@ -95,6 +98,7 @@ public class ReportService {
             TeacherStudentLink link,
             Teacher teacher,
             KpiSummaryResponse summary,
+            YearMonth month,
             Instant generatedAt,
             boolean historicalSnapshot) {
         AcceptanceRateResponse acceptance = summary.acceptanceRate();
@@ -103,8 +107,8 @@ public class ReportService {
                 summary.name(),
                 link.getStudent().getUsername(),
                 teacher.getUsername(),
-                monthLabel(summary.month()),
-                summary.month(),
+                monthLabel(month.toString()),
+                month.toString(),
                 historicalSnapshot ? "Snapshot historico cerrado" : "Resumen KPI en tiempo real",
                 generatedAt,
                 acceptance.acceptanceRatePercentage(),

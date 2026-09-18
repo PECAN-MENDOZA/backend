@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record TopWordsResponse(
         @JsonProperty("id_estudiante") UUID studentId,
-        String month,
+        String from,
+        String to,
         @JsonProperty("top_palabras") List<TopWordItem> topWords) {
 }

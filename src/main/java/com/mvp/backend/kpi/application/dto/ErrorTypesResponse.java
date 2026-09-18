@@ -7,7 +7,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record ErrorTypesResponse(
         @JsonProperty("id_estudiante") UUID studentId,
-        String month,
+        String from,
+        String to,
         @JsonProperty("total_errores") long totalErrors,
         @JsonProperty("tipos_error") List<ErrorTypeItem> errorTypes) {
 }

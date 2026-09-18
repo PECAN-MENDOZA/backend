@@ -6,7 +6,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record AcceptanceRateResponse(
         @JsonProperty("id_estudiante") UUID studentId,
-        String month,
+        String from,
+        String to,
         @JsonProperty("total_envios") long totalSubmissions,
         @JsonProperty("total_aceptadas") long totalAccepted,
         @JsonProperty("total_rechazadas") long totalRejected,

@@ -69,6 +69,12 @@ Flyway applies the schema automatically. Swagger UI is available at `http://loca
 | `POST` | `/api/v1/corrections/process` | Student |
 | `PATCH` | `/api/v1/corrections/sessions/{id}/feedback` | Student |
 | `GET` | `/api/v1/kpis/students/{id}/summary?month=2026-05` | Teacher |
+| `POST` | `/api/v1/research/tests` | Researcher |
+| `GET` | `/api/v1/research/tests/{id}/results` | Researcher |
+| `GET` | `/api/v1/research/tests/{id}/export.csv` | Researcher |
+| `GET` | `/api/v1/tests/assigned` | Student |
+| `POST` | `/api/v1/tests/{id}/attempts` | Student |
+| `PUT` | `/api/v1/attempts/{id}/responses/{position}` | Student |
 
 Teachers create students inside one of their classrooms through `POST /api/v1/teachers/classrooms/{id}/students`.
 The backend generates a kid-friendly alias (`palabra-NN`, e.g. `tigre-07`) and a 4-digit PIN, inherits the teacher
@@ -79,7 +85,9 @@ the teacher resets it via `POST /api/v1/teachers/students/{id}/reset-pin`, which
 
 Teacher accounts have no public self-registration: a researcher creates them via `POST /api/v1/research/teachers`,
 which returns a temporary password once. See [docs/research-api.md](docs/research-api.md) for the full endpoint
-table, roles, and the research workflow.
+table, roles, and the sentence-test research workflow (drafting a test, assigning it, the student's
+Start/Finish-per-sentence flow, contextual correction during a test, and the bootstrap-based results and CSV
+export).
 
 ## Verify
 
@@ -99,3 +107,7 @@ Default demo credentials:
 
 - teacher: `sofia.garcia@colegio.edu.pe` / `DemoTeacher123`
 - students: `student_001` to `student_015` / `1234` (4-digit PIN, same format as real students)
+
+If a researcher account already exists (see `RESEARCHER_EMAIL`/`RESEARCHER_PASSWORD` above), the seed also
+creates a draft sentence test `PRUEBA-DEMO` with 6 sentences owned by that researcher; without one, this step is
+skipped with a log line.

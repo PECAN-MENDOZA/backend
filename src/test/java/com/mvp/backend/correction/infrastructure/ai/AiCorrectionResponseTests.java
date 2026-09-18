@@ -44,14 +44,14 @@ class AiCorrectionResponseTests {
     }
 
     @Test
-    void correctionRequestReadsTheOptionalRunId() {
-        UUID runId = UUID.randomUUID();
+    void correctionRequestReadsTheOptionalResponseId() {
+        UUID responseId = UUID.randomUUID();
 
-        var withRun = objectMapper.readValue(
-                "{\"texto_original\":\"hola\",\"id_ejecucion\":\"" + runId + "\"}", ProcessCorrectionRequest.class);
-        var withoutRun = objectMapper.readValue("{\"texto_original\":\"hola\"}", ProcessCorrectionRequest.class);
+        var withResponse = objectMapper.readValue(
+                "{\"texto_original\":\"hola\",\"id_respuesta\":\"" + responseId + "\"}", ProcessCorrectionRequest.class);
+        var withoutResponse = objectMapper.readValue("{\"texto_original\":\"hola\"}", ProcessCorrectionRequest.class);
 
-        assertThat(withRun.experimentRunId()).isEqualTo(runId);
-        assertThat(withoutRun.experimentRunId()).isNull();
+        assertThat(withResponse.testResponseId()).isEqualTo(responseId);
+        assertThat(withoutResponse.testResponseId()).isNull();
     }
 }

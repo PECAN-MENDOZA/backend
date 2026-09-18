@@ -3,7 +3,7 @@ package com.mvp.backend.correction.domain.model;
 import java.time.Instant;
 import java.util.UUID;
 
-import com.mvp.backend.experiment.domain.model.ExperimentRun;
+import com.mvp.backend.sentencetest.domain.model.TestResponse;
 import com.mvp.backend.student.domain.model.Student;
 
 import jakarta.persistence.Column;
@@ -61,10 +61,10 @@ public class CorrectionSession {
     @Column(name = "feedback_reason", length = 40)
     private String feedbackReason;
 
-    // Solo cuando la correccion se pidio dentro de una ejecucion experimental (uso normal: null).
+    // Solo cuando la correccion se pidio sobre una oracion de una prueba (uso normal: null).
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "experiment_run_id")
-    private ExperimentRun experimentRun;
+    @JoinColumn(name = "test_response_id")
+    private TestResponse testResponse;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -73,15 +73,15 @@ public class CorrectionSession {
         this(student, originalText, null);
     }
 
-    public CorrectionSession(Student student, String originalText, ExperimentRun experimentRun) {
+    public CorrectionSession(Student student, String originalText, TestResponse testResponse) {
         this.id = UUID.randomUUID();
         this.student = student;
         this.originalText = originalText;
-        this.experimentRun = experimentRun;
+        this.testResponse = testResponse;
     }
 
-    public boolean isExperimental() {
-        return experimentRun != null;
+    public boolean isInTest() {
+        return testResponse != null;
     }
 
     @PrePersist

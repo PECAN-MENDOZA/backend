@@ -1,7 +1,6 @@
 package com.mvp.backend.correction.domain.repository;
 
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,8 +40,10 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
 
     Page<CorrectionSession> findByStudentIdOrderByCreatedAtDesc(UUID studentId, Pageable pageable);
 
-    // Sesiones de correccion pedidas dentro de ejecuciones experimentales (anotacion semantica ciega).
-    List<CorrectionSession> findByExperimentRunIdInOrderByCreatedAtAsc(Collection<UUID> runIds);
+    // Sesiones de correccion pedidas sobre oraciones de una prueba (resultados y exportacion).
+    List<CorrectionSession> findByTestResponseIdIn(List<UUID> testResponseIds);
+
+    long countByTestResponseId(UUID testResponseId);
 
     @Query("""
             select count(session) as totalSessions,

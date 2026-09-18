@@ -121,8 +121,14 @@ public class ResearchTeacherService {
                 students);
     }
 
+    // teacher_users.username es VARCHAR(80): la parte local se acota a 70 para que quepa el sufijo "-N".
+    private static final int USERNAME_BASE_MAX = 70;
+
     private String uniqueUsername(String email) {
         String base = email.substring(0, email.indexOf('@')).toLowerCase(Locale.ROOT);
+        if (base.length() > USERNAME_BASE_MAX) {
+            base = base.substring(0, USERNAME_BASE_MAX);
+        }
         if (!teacherRepository.existsByUsername(base)) {
             return base;
         }

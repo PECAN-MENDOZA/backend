@@ -79,6 +79,23 @@ class ResearchTeacherServiceTests {
     }
 
     @Test
+    void longEmailLocalPartIsTruncatedBeforeSuffix() {
+        String base = "a".repeat(70);
+        when(teacherRepository.existsByEmail(anyString())).thenReturn(false);
+        when(researcherRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(teacherRepository.existsByUsername(base)).thenReturn(true);
+        when(teacherRepository.existsByUsername(base + "-2")).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(teacherRepository.save(any(Teacher.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var response = service.createTeacher(
+                researcherId, new CreateTeacherRequest("L", "a".repeat(120) + "@x.edu", "X"));
+
+        assertThat(response.username()).isEqualTo(base + "-2");
+        assertThat(response.username()).hasSizeLessThanOrEqualTo(80);
+    }
+
+    @Test
     void emailInUseByTeacherOrResearcherIsConflict() {
         when(teacherRepository.existsByEmail("dup@x.edu")).thenReturn(true);
 

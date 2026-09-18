@@ -98,6 +98,20 @@ class LiveTestsServiceTests {
     }
 
     @Test
+    void currentPositionNeverExceedsSentenceCount() {
+        when(linkRepository.findActiveWithStudentAndClassroomByTeacherId(teacherId)).thenReturn(List.of(
+                new TeacherStudentLink(teacher, ana, classroomB, "enc-ana01", null)));
+        TestAttempt attempt = new TestAttempt(test, ana, "app-1", "backend-1", NOW.minusSeconds(120));
+        when(attemptRepository.findByStudentIdInAndStatus(List.of(ana.getId()), AttemptStatus.IN_PROGRESS))
+                .thenReturn(List.of(attempt));
+        // Ultima oracion terminada pero el intento aun no se marco COMPLETED.
+        when(responseRepository.countByAttemptIdAndFinishedAtIsNotNull(attempt.getId())).thenReturn(5L);
+        when(sentenceRepository.countByTestId(test.getId())).thenReturn(5L);
+
+        assertThat(service.live(teacherId).get(0).currentPosition()).isEqualTo(5);
+    }
+
+    @Test
     void teacherWithoutLinkedStudentsGetsEmptyListWithoutQueryingAttempts() {
         when(linkRepository.findActiveWithStudentAndClassroomByTeacherId(teacherId)).thenReturn(List.of());
 

@@ -78,7 +78,7 @@ class TemporaryPasswordFilterTests {
     private Teacher newTeacher(boolean mustChangePassword) {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         return new Teacher("doc-" + suffix, suffix + "@c.edu", null, "C",
-                passwordEncoder.encode("Temporary23"), null, mustChangePassword);
+                passwordEncoder.encode("Temporary23"), null, mustChangePassword, null);
     }
 
     private static RequestPostProcessor teacher(UUID teacherId) {

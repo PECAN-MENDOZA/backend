@@ -20,7 +20,8 @@ public interface ClassroomRepository extends JpaRepository<Classroom, UUID> {
 
     Optional<Classroom> findByIdAndTeacherId(UUID id, UUID teacherId);
 
-    boolean existsByTeacherIdAndName(UUID teacherId, String name);
+    // Solo salones activos: el nombre de un salon archivado puede reutilizarse (indice parcial de V15).
+    boolean existsByTeacherIdAndNameAndArchivedAtIsNull(UUID teacherId, String name);
 
     List<Classroom> findAllByOrderByCreatedAtAsc();
 }

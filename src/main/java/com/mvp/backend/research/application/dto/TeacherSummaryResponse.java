@@ -6,6 +6,7 @@ import java.util.UUID;
 public record TeacherSummaryResponse(
         UUID id,
         String username,
+        String fullName,
         String email,
         String institution,
         Instant createdAt,

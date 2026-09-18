@@ -167,7 +167,7 @@ class StudentInsightsServiceTests {
                 session("camion", t, s -> s.registerFeedback("camión", null, true, 1, null)),
                 session("avion", t, s -> s.registerFeedback("avión", null, false, 1, "WRONG")),
                 session("arbol", t, s -> { }));
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(onlyAna), eq(START), eq(END), any(Pageable.class))).thenReturn(sessions);
 
         StudentHelpResponse help = service.help(teacherId, ana.getId(), DAY, DAY);
@@ -190,7 +190,7 @@ class StudentInsightsServiceTests {
     @Test
     void helpWithoutSessionsIsAllZeros() {
         ownLink();
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(onlyAna), eq(START), eq(END), any(Pageable.class))).thenReturn(List.of());
 
         StudentHelpResponse help = service.help(teacherId, ana.getId(), DAY, DAY);
@@ -208,7 +208,7 @@ class StudentInsightsServiceTests {
                 session("ola", t1.plusSeconds(2), s -> s.registerFeedback("hola", "hola amigo", true, 1, null)),
                 session("baca", t1.plusSeconds(1), testResponse, s -> s.registerFeedback("vaca", null, false, 1, "UNDO")),
                 session("avion", t1, s -> { }));
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(onlyAna), eq(START), eq(END), any(Pageable.class))).thenReturn(sessions);
 
         List<StudentWritingItem> items = service.writings(teacherId, ana.getId(), DAY, DAY, null);
@@ -239,7 +239,7 @@ class StudentInsightsServiceTests {
     @Test
     void writingsClampLimitBetweenOneAndTwoHundredDefaultingToOneHundred() {
         ownLink();
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(onlyAna), eq(START), eq(END), any(Pageable.class))).thenReturn(List.of());
 
         service.writings(teacherId, ana.getId(), DAY, DAY, null);
@@ -249,7 +249,7 @@ class StudentInsightsServiceTests {
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(sessionRepository, times(4))
-                .findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+                .findInPeriodByStudentIds(
                         eq(onlyAna), eq(START), eq(END), pageable.capture());
         assertThat(pageable.getAllValues()).extracting(Pageable::getPageSize).containsExactly(100, 1, 200, 20);
     }

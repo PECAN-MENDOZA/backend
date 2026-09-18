@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.research.application.dto.CreateTeacherRequest;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.shared.exception.ConflictException;
@@ -35,6 +37,7 @@ class ResearchTeacherServiceTests {
     @Mock private ResearcherRepository researcherRepository;
     @Mock private ClassroomRepository classroomRepository;
     @Mock private TeacherStudentLinkRepository linkRepository;
+    @Mock private CorrectionSessionRepository sessionRepository;
     @Mock private PasswordEncoder passwordEncoder;
 
     private ResearchTeacherService service;
@@ -43,7 +46,7 @@ class ResearchTeacherServiceTests {
     @BeforeEach
     void setUp() {
         service = new ResearchTeacherService(
-                teacherRepository, researcherRepository, classroomRepository, linkRepository,
+                teacherRepository, researcherRepository, classroomRepository, linkRepository, sessionRepository,
                 new TemporaryPasswordGenerator(), passwordEncoder);
     }
 
@@ -59,6 +62,7 @@ class ResearchTeacherServiceTests {
                 new CreateTeacherRequest("Sofia Garcia", "Sofia.Garcia@colegio.edu.pe", "Colegio San Martin"));
 
         assertThat(response.username()).isEqualTo("sofia.garcia");
+        assertThat(response.fullName()).isEqualTo("Sofia Garcia");
         assertThat(response.email()).isEqualTo("Sofia.Garcia@colegio.edu.pe");
         assertThat(response.temporaryPassword()).matches("[A-HJ-NP-Za-km-z2-9]{10}");
     }
@@ -126,12 +130,37 @@ class ResearchTeacherServiceTests {
         when(classroomRepository.findAllByOrderByCreatedAtAsc()).thenReturn(List.of(classroom));
         when(linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId()))
                 .thenReturn(List.of(link));
+        when(sessionRepository.lastActivityByStudent(List.of(student.getId()))).thenReturn(List.of());
 
         var directory = service.classroomDirectory();
 
         assertThat(directory).hasSize(1);
         assertThat(directory.get(0).teacherUsername()).isEqualTo("ana");
         assertThat(directory.get(0).students()).extracting(s -> s.username()).containsExactly("tigre-07");
+        assertThat(directory.get(0).students().get(0).lastActivityAt()).isNull();
         assertThat(directory.get(0).toString()).doesNotContain("cipher-real-name");
+    }
+
+    @Test
+    void classroomDirectoryReportsLastCorrectionSessionAsActivity() {
+        Teacher teacher = new Teacher("ana", "ana@x.edu", null, "X", "hash");
+        Classroom classroom = new Classroom(teacher, "3 B");
+        Student active = new Student("tigre-07", "X", "hash");
+        Student silent = new Student("puma-02", "X", "hash");
+        TeacherStudentLink activeLink = new TeacherStudentLink(teacher, active, classroom, "enc", null);
+        TeacherStudentLink silentLink = new TeacherStudentLink(teacher, silent, classroom, "enc", null);
+        // El docente abrio la lista (last_access_at), pero eso no es actividad del alumno.
+        silentLink.registerAccess();
+        Instant lastSession = Instant.parse("2026-09-15T13:00:00Z");
+        when(classroomRepository.findAllByOrderByCreatedAtAsc()).thenReturn(List.of(classroom));
+        when(linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId()))
+                .thenReturn(List.of(activeLink, silentLink));
+        when(sessionRepository.lastActivityByStudent(List.of(active.getId(), silent.getId())))
+                .thenReturn(List.<Object[]>of(new Object[] {active.getId(), lastSession}));
+
+        var students = service.classroomDirectory().get(0).students();
+
+        assertThat(students.get(0).lastActivityAt()).isEqualTo(lastSession);
+        assertThat(students.get(1).lastActivityAt()).isNull();
     }
 }

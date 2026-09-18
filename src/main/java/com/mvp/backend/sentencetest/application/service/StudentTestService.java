@@ -201,8 +201,10 @@ public class StudentTestService {
         return response;
     }
 
+    /** Un intento CANCELLED no cuenta: una prueba CLOSED cuyo unico intento se cancelo ya no puede iniciarse. */
     private static boolean hasAttempt(List<TestAttempt> attempts, SentenceTest test) {
-        return attempts.stream().anyMatch(a -> a.getTest().getId().equals(test.getId()));
+        return attempts.stream()
+                .anyMatch(a -> a.getTest().getId().equals(test.getId()) && a.getStatus() != AttemptStatus.CANCELLED);
     }
 
     /** COMPLETED si existe un intento completado; IN_PROGRESS si hay uno en curso; si no, PENDING. */

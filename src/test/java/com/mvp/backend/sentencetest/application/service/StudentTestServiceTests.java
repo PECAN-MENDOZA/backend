@@ -23,6 +23,7 @@ import com.mvp.backend.sentencetest.application.dto.AttemptResponse;
 import com.mvp.backend.sentencetest.application.dto.FinishSentenceRequest;
 import com.mvp.backend.sentencetest.application.dto.StartAttemptRequest;
 import com.mvp.backend.sentencetest.domain.model.Assistance;
+import com.mvp.backend.sentencetest.domain.model.AttemptCancelReason;
 import com.mvp.backend.sentencetest.domain.model.AttemptStatus;
 import com.mvp.backend.sentencetest.domain.model.SentenceKind;
 import com.mvp.backend.sentencetest.domain.model.SentenceTest;
@@ -178,6 +179,20 @@ class StudentTestServiceTests {
         assertThat(assigned).hasSize(1);
         assertThat(assigned.get(0).testId()).isEqualTo(closedWithAttempt.getId());
         assertThat(assigned.get(0).status()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void assignedTestsHidesClosedTestWhoseOnlyAttemptWasCancelled() {
+        SentenceTest closed = new SentenceTest("PRUEBA-06", "Cerrada con intento cancelado", UUID.randomUUID());
+        closed.activate(1, now);
+        closed.close(now);
+        TestAttempt cancelled = new TestAttempt(closed, student, "app", "b", now);
+        cancelled.cancel(AttemptCancelReason.ABANDONED, now);
+        when(assignmentRepository.findByStudentIdOrderByAssignedAtDesc(student.getId()))
+                .thenReturn(List.of(new TestAssignment(closed, student, null, UUID.randomUUID(), now)));
+        when(attemptRepository.findByStudentIdOrderByStartedAtDesc(student.getId())).thenReturn(List.of(cancelled));
+
+        assertThat(service.assignedTests(student.getId())).isEmpty();
     }
 
     @Test

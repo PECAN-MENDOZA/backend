@@ -13,6 +13,7 @@ public record ClassroomDirectoryResponse(
         boolean archived,
         List<StudentEntry> students) {
 
-    public record StudentEntry(UUID studentId, String username, Instant lastAccessAt) {
+    /** lastActivityAt: ultima sesion de correccion del alumno (null si nunca escribio). */
+    public record StudentEntry(UUID studentId, String username, Instant lastActivityAt) {
     }
 }

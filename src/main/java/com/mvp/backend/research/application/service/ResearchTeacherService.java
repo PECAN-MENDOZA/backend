@@ -1,13 +1,17 @@
 package com.mvp.backend.research.application.service;
 
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.research.application.dto.ClassroomDirectoryResponse;
 import com.mvp.backend.research.application.dto.CreateTeacherRequest;
 import com.mvp.backend.research.application.dto.CreatedTeacherResponse;
@@ -30,6 +34,7 @@ public class ResearchTeacherService {
     private final ResearcherRepository researcherRepository;
     private final ClassroomRepository classroomRepository;
     private final TeacherStudentLinkRepository linkRepository;
+    private final CorrectionSessionRepository sessionRepository;
     private final TemporaryPasswordGenerator passwords;
     private final PasswordEncoder passwordEncoder;
 
@@ -38,12 +43,14 @@ public class ResearchTeacherService {
             ResearcherRepository researcherRepository,
             ClassroomRepository classroomRepository,
             TeacherStudentLinkRepository linkRepository,
+            CorrectionSessionRepository sessionRepository,
             TemporaryPasswordGenerator passwords,
             PasswordEncoder passwordEncoder) {
         this.teacherRepository = teacherRepository;
         this.researcherRepository = researcherRepository;
         this.classroomRepository = classroomRepository;
         this.linkRepository = linkRepository;
+        this.sessionRepository = sessionRepository;
         this.passwords = passwords;
         this.passwordEncoder = passwordEncoder;
     }
@@ -63,10 +70,12 @@ public class ResearchTeacherService {
                 request.institution().trim(),
                 passwordEncoder.encode(temporaryPassword),
                 researcherId,
-                true));
+                true,
+                request.fullName().trim()));
         return new CreatedTeacherResponse(
                 teacher.getId(),
                 teacher.getUsername(),
+                teacher.getFullName(),
                 teacher.getEmail(),
                 teacher.getInstitution(),
                 temporaryPassword);
@@ -78,6 +87,7 @@ public class ResearchTeacherService {
                 .map(teacher -> new TeacherSummaryResponse(
                         teacher.getId(),
                         teacher.getUsername(),
+                        teacher.getFullName(),
                         teacher.getEmail(),
                         teacher.getInstitution(),
                         teacher.getCreatedAt(),
@@ -104,13 +114,20 @@ public class ResearchTeacherService {
     }
 
     private ClassroomDirectoryResponse toDirectory(Classroom classroom) {
-        var students = linkRepository
-                .findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId())
-                .stream()
+        var links = linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId());
+        // Ultima actividad real del alumno (su ultima sesion de correccion), no cuando el docente abrio la lista.
+        Map<UUID, Instant> lastActivity = new HashMap<>();
+        if (!links.isEmpty()) {
+            List<UUID> studentIds = links.stream().map(link -> link.getStudent().getId()).toList();
+            for (Object[] row : sessionRepository.lastActivityByStudent(studentIds)) {
+                lastActivity.put((UUID) row[0], (Instant) row[1]);
+            }
+        }
+        var students = links.stream()
                 .map(link -> new ClassroomDirectoryResponse.StudentEntry(
                         link.getStudent().getId(),
                         link.getStudent().getUsername(),
-                        link.getLastAccessAt()))
+                        lastActivity.get(link.getStudent().getId())))
                 .toList();
         return new ClassroomDirectoryResponse(
                 classroom.getId(),

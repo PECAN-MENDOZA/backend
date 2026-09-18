@@ -61,7 +61,7 @@ class AuthServiceTests {
     @Test
     void logsTeacherInUsingEmail() {
         var teacher = new Teacher(
-                "teacher_01", "teacher@upc.edu", null, "UPC", "encoded-password", UUID.randomUUID(), true);
+                "teacher_01", "teacher@upc.edu", null, "UPC", "encoded-password", UUID.randomUUID(), true, null);
         when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(true);
         when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true))
@@ -111,7 +111,7 @@ class AuthServiceTests {
     void staffLoginAlwaysRunsExactlyTwoComparisonsWhateverTheAccountType() {
         var researcher = new Researcher("authors@tesis.local", "researcher-hash");
         var teacher = new Teacher(
-                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true);
+                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true, null);
         when(researcherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.of(researcher));
         when(teacherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.empty());
         when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
@@ -134,7 +134,7 @@ class AuthServiceTests {
     @Test
     void teacherWithTheRightPasswordLogsInThroughStaffLoginWithTwoComparisons() {
         var teacher = new Teacher(
-                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true);
+                "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true, null);
         when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
         when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "teacher-hash")).thenReturn(true);
@@ -153,7 +153,7 @@ class AuthServiceTests {
     @Test
     void changePasswordClearsMustChangeFlag() {
         var teacher = new Teacher(
-                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true);
+                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true, null);
         when(teacherRepository.findById(teacher.getId())).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Temporary23", "temporary-hash")).thenReturn(true);
         when(passwordEncoder.encode("Permanent45")).thenReturn("permanent-hash");
@@ -168,7 +168,7 @@ class AuthServiceTests {
     @Test
     void changePasswordRejectsWrongCurrent() {
         var teacher = new Teacher(
-                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true);
+                "teacher_01", "teacher@upc.edu", null, "UPC", "temporary-hash", UUID.randomUUID(), true, null);
         when(teacherRepository.findById(teacher.getId())).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Wrong123", "temporary-hash")).thenReturn(false);
 

@@ -60,7 +60,7 @@ class ClassroomServiceTests {
     @Test
     void createsClassroomForTeacher() {
         when(teacherRepository.findById(teacherId)).thenReturn(Optional.of(teacher));
-        when(classroomRepository.existsByTeacherIdAndName(teacherId, "3.º B")).thenReturn(false);
+        when(classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, "3.º B")).thenReturn(false);
         when(classroomRepository.save(any(Classroom.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var response = service.createClassroom(teacherId, new CreateClassroomRequest("3.º B"));
@@ -73,11 +73,36 @@ class ClassroomServiceTests {
     @Test
     void rejectsDuplicateClassroomName() {
         when(teacherRepository.findById(teacherId)).thenReturn(Optional.of(teacher));
-        when(classroomRepository.existsByTeacherIdAndName(teacherId, "3.º B")).thenReturn(true);
+        when(classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, "3.º B")).thenReturn(true);
 
         assertThatThrownBy(() -> service.createClassroom(teacherId, new CreateClassroomRequest("3.º B")))
                 .isInstanceOf(ConflictException.class);
         verify(classroomRepository, never()).save(any());
+    }
+
+    @Test
+    void unarchiveRejectsNameClashWithActiveClassroom() {
+        Classroom classroom = new Classroom(teacher, "3.º B");
+        classroom.archive();
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+        when(classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, "3.º B")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.updateClassroom(teacherId, classroom.getId(), new UpdateClassroomRequest(null, false)))
+                .isInstanceOf(ConflictException.class);
+        assertThat(classroom.isArchived()).isTrue();
+    }
+
+    @Test
+    void renamingAnArchivedClassroomDoesNotCheckActiveNames() {
+        Classroom classroom = new Classroom(teacher, "3.º B");
+        classroom.archive();
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+        when(linkRepository.countByClassroomIdAndDeletedAtIsNull(classroom.getId())).thenReturn(0L);
+
+        var response = service.updateClassroom(teacherId, classroom.getId(), new UpdateClassroomRequest("4.º A", null));
+
+        assertThat(response.name()).isEqualTo("4.º A");
+        verify(classroomRepository, never()).existsByTeacherIdAndNameAndArchivedAtIsNull(any(), any());
     }
 
     @Test

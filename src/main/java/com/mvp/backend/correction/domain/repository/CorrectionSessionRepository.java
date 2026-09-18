@@ -46,8 +46,24 @@ public interface CorrectionSessionRepository extends JpaRepository<CorrectionSes
     long countByTestResponseId(UUID testResponseId);
 
     // Sesiones de un grupo de alumnos en [start, end), las mas recientes primero (panel del docente).
-    List<CorrectionSession> findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
-            List<UUID> studentIds, Instant start, Instant end, Pageable pageable);
+    // Trae de una vez la cadena respuesta -> oracion / intento -> prueba (todas *-a-uno) para que
+    // CorrectionFacts.assistance/testCode no disparen una consulta por sesion.
+    @Query("""
+            select s from CorrectionSession s
+            left join fetch s.testResponse tr
+            left join fetch tr.sentence
+            left join fetch tr.attempt a
+            left join fetch a.test
+            where s.student.id in :studentIds
+              and s.createdAt >= :start
+              and s.createdAt < :end
+            order by s.createdAt desc
+            """)
+    List<CorrectionSession> findInPeriodByStudentIds(
+            @Param("studentIds") List<UUID> studentIds,
+            @Param("start") Instant start,
+            @Param("end") Instant end,
+            Pageable pageable);
 
     // Ultima actividad de cada alumno sin limite de periodo: filas [studentId, max(createdAt)].
     @Query("""

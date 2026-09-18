@@ -42,11 +42,14 @@ public class Teacher {
     @Column(name = "must_change_password", nullable = false)
     private boolean mustChangePassword;
 
+    @Column(name = "full_name", length = 120)
+    private String fullName;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     public Teacher(String username, String email, String phone, String institution, String passwordHash) {
-        this(username, email, phone, institution, passwordHash, null, false);
+        this(username, email, phone, institution, passwordHash, null, false, null);
     }
 
     public Teacher(
@@ -56,7 +59,8 @@ public class Teacher {
             String institution,
             String passwordHash,
             UUID createdBy,
-            boolean mustChangePassword) {
+            boolean mustChangePassword,
+            String fullName) {
         this.id = UUID.randomUUID();
         this.username = username;
         this.email = email;
@@ -65,6 +69,7 @@ public class Teacher {
         this.passwordHash = passwordHash;
         this.createdBy = createdBy;
         this.mustChangePassword = mustChangePassword;
+        this.fullName = fullName;
     }
 
     @PrePersist

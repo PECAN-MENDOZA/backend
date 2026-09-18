@@ -190,11 +190,11 @@ class ResearchTestServiceTests {
 
     @Test
     void assignByClassroomCreatesOneAssignmentPerUnassignedStudent() {
-        Teacher teacher = new Teacher("doc", "d@c.edu", null, "C", "hash", researcherId, true);
+        Teacher teacher = new Teacher("doc", "d@c.edu", null, "C", "hash", researcherId, true, null);
         Classroom classroom = new Classroom(teacher, "3 B");
         Student already = new Student("puma-01", "Colegio", "hash");
         when(testRepository.findById(active.getId())).thenReturn(Optional.of(active));
-        when(classroomRepository.existsById(classroom.getId())).thenReturn(true);
+        when(classroomRepository.findById(classroom.getId())).thenReturn(Optional.of(classroom));
         when(linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroom.getId())).thenReturn(List.of(
                 new TeacherStudentLink(teacher, student, classroom, "enc", null),
                 new TeacherStudentLink(teacher, already, classroom, "enc", null)));
@@ -240,9 +240,40 @@ class ResearchTestServiceTests {
 
         UUID classroomId = UUID.randomUUID();
         when(testRepository.findById(active.getId())).thenReturn(Optional.of(active));
-        when(classroomRepository.existsById(classroomId)).thenReturn(false);
+        when(classroomRepository.findById(classroomId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.assign(researcherId, active.getId(), new AssignTestRequest(classroomId, null)))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void assignToArchivedClassroomIsRejected() {
+        Teacher teacher = new Teacher("doc", "d@c.edu", null, "C", "hash", researcherId, true, null);
+        Classroom archived = new Classroom(teacher, "3 B");
+        archived.archive();
+        when(testRepository.findById(active.getId())).thenReturn(Optional.of(active));
+        when(classroomRepository.findById(archived.getId())).thenReturn(Optional.of(archived));
+
+        assertThatThrownBy(() -> service.assign(researcherId, active.getId(), new AssignTestRequest(archived.getId(), null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Cannot assign an archived classroom");
+        verify(assignmentRepository, never()).save(any());
+    }
+
+    @Test
+    void excludingTwiceKeepsTheFirstReasonAndAuthor() {
+        TestAttempt attempt = new TestAttempt(active, student, "app", "b", now);
+        attempt.complete(now);
+        UUID firstResearcher = UUID.randomUUID();
+        attempt.exclude("Motivo original suficientemente largo", firstResearcher, now.minusSeconds(60));
+        when(attemptRepository.findById(attempt.getId())).thenReturn(Optional.of(attempt));
+
+        assertThatThrownBy(() -> service.excludeAttempt(researcherId, active.getId(), attempt.getId(),
+                "Otro motivo que no debe pisar al primero"))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Attempt already excluded");
+        assertThat(attempt.getExclusionReason()).isEqualTo("Motivo original suficientemente largo");
+        assertThat(attempt.getExcludedBy()).isEqualTo(firstResearcher);
+        assertThat(attempt.getExcludedAt()).isEqualTo(now.minusSeconds(60));
     }
 
     @Test

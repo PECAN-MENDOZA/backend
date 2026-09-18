@@ -96,7 +96,7 @@ class ResearchTestApiTests {
         // Sufijo en mayusculas: los codigos de prueba solo admiten [A-Z0-9-].
         suffix = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         researcherId = researcherRepository.save(new Researcher(suffix + "@lab.edu", "hash")).getId();
-        Teacher teacher = teacherRepository.save(new Teacher("doc-" + suffix, suffix + "@c.edu", null, "C", "hash", researcherId, true));
+        Teacher teacher = teacherRepository.save(new Teacher("doc-" + suffix, suffix + "@c.edu", null, "C", "hash", researcherId, true, null));
         teacherId = teacher.getId();
         Classroom classroom = classroomRepository.save(new Classroom(teacher, "3 B"));
         classroomId = classroom.getId();

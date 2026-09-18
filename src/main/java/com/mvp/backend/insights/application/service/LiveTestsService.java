@@ -74,8 +74,9 @@ public class LiveTestsService {
                 link.getClassroom().getName(),
                 test.getCode(),
                 test.getTitle(),
-                // Oracion en curso: la siguiente a las ya terminadas.
-                finished + 1,
+                // Oracion en curso: la siguiente a las ya terminadas, acotada a la ultima mientras
+                // el intento termina de marcarse COMPLETED.
+                Math.min(finished + 1, sentenceCount),
                 sentenceCount,
                 attempt.getStartedAt());
     }

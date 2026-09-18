@@ -98,7 +98,7 @@ writings, live tests, period report PDF).
 ## Verify
 
 ```powershell
-./mvnw "-Dmaven.repo.local=.m2" test
+.\mvnw.cmd -q test
 ```
 
 ## Seed demo data

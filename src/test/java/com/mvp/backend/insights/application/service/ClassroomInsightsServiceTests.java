@@ -102,7 +102,7 @@ class ClassroomInsightsServiceTests {
                 session(ana, "baca", t1, s -> s.registerFeedback("vaca", null, false, 1, "UNDO")),
                 session(beto, "avion", t2, s -> { }),
                 session(dani, "camion", t1, s -> s.registerFeedback("camión", null, true, 1, null)));
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(studentIds), eq(START), eq(END), any(Pageable.class))).thenReturn(sessions);
         when(sessionRepository.lastActivityByStudent(studentIds)).thenReturn(List.of(
                 new Object[] {ana.getId(), afterPeriod},
@@ -147,7 +147,7 @@ class ClassroomInsightsServiceTests {
                 session(beto, "caza", t1.plusSeconds(2), s -> s.registerFeedback("casa", null, true, 1, null)),
                 session(ana, "baca", t1.plusSeconds(1), testResponse, s -> s.registerFeedback("vaca", null, false, 1, "WRONG")),
                 session(dani, "avion", t1, s -> { }));
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(studentIds), eq(START), eq(END), any(Pageable.class))).thenReturn(sessions);
 
         List<RecentCorrectionItem> items = service.recentCorrections(teacherId, classroom.getId(), DAY, DAY, null);
@@ -186,7 +186,7 @@ class ClassroomInsightsServiceTests {
     @Test
     void recentClampsLimitBetweenOneAndTwoHundredDefaultingToFifty() {
         ownClassroomWithLinks();
-        when(sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        when(sessionRepository.findInPeriodByStudentIds(
                 eq(studentIds), eq(START), eq(END), any(Pageable.class))).thenReturn(List.of());
 
         service.recentCorrections(teacherId, classroom.getId(), DAY, DAY, null);
@@ -196,7 +196,7 @@ class ClassroomInsightsServiceTests {
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(sessionRepository, times(4))
-                .findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+                .findInPeriodByStudentIds(
                         eq(studentIds), eq(START), eq(END), pageable.capture());
         assertThat(pageable.getAllValues()).extracting(Pageable::getPageSize).containsExactly(50, 1, 200, 7);
         assertThat(pageable.getAllValues()).extracting(Pageable::getPageNumber).containsOnly(0);

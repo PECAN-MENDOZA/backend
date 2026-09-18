@@ -78,7 +78,7 @@ class ClassroomPersistenceTests {
     void teacherCreatedByResearcherMustChangeTemporaryPassword() {
         UUID researcherId = UUID.randomUUID();
         Teacher teacher = teacherRepository.save(
-                new Teacher("ana.perez", UUID.randomUUID() + "@colegio.edu.pe", null, "Colegio", "hash", researcherId, true));
+                new Teacher("ana.perez", UUID.randomUUID() + "@colegio.edu.pe", null, "Colegio", "hash", researcherId, true, "Ana Perez"));
 
         assertThat(teacher.getCreatedBy()).isEqualTo(researcherId);
         assertThat(teacher.isMustChangePassword()).isTrue();

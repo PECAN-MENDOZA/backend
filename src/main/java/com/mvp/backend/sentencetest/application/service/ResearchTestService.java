@@ -38,6 +38,7 @@ import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
 import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
@@ -224,6 +225,10 @@ public class ResearchTestService {
     @Transactional
     public AttemptDetailResponse excludeAttempt(UUID researcherId, UUID testId, UUID attemptId, String reason) {
         TestAttempt attempt = requireAttempt(testId, attemptId);
+        // La exclusion es una anotacion de auditoria: no se sobrescribe motivo ni autor.
+        if (attempt.isExcluded()) {
+            throw new ConflictException("Attempt already excluded");
+        }
         attempt.exclude(reason, researcherId, clock.instant());
         return toAttemptDetail(attempt);
     }
@@ -282,8 +287,10 @@ public class ResearchTestService {
     }
 
     private List<Student> classroomStudents(UUID classroomId) {
-        if (!classroomRepository.existsById(classroomId)) {
-            throw new NotFoundException("Classroom not found");
+        Classroom classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new NotFoundException("Classroom not found"));
+        if (classroom.isArchived()) {
+            throw new BusinessException("Cannot assign an archived classroom");
         }
         return linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroomId).stream()
                 .map(TeacherStudentLink::getStudent)

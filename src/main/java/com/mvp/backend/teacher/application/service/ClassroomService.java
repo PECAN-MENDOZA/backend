@@ -62,7 +62,7 @@ public class ClassroomService {
         Teacher teacher = teacherRepository.findById(teacherId)
                 .orElseThrow(() -> new NotFoundException("Teacher not found"));
         String name = request.name().trim();
-        if (classroomRepository.existsByTeacherIdAndName(teacherId, name)) {
+        if (classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, name)) {
             throw new ConflictException("Classroom name is already in use");
         }
         Classroom saved = classroomRepository.save(new Classroom(teacher, name));
@@ -84,7 +84,9 @@ public class ClassroomService {
             if (name.isEmpty()) {
                 throw new BusinessException("Classroom name cannot be blank");
             }
-            if (!name.equals(classroom.getName()) && classroomRepository.existsByTeacherIdAndName(teacherId, name)) {
+            // Un salon archivado no compite por el nombre; si vuelve a activarse se valida al desarchivar.
+            if (!name.equals(classroom.getName()) && !classroom.isArchived()
+                    && classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, name)) {
                 throw new ConflictException("Classroom name is already in use");
             }
             classroom.rename(name);
@@ -93,6 +95,10 @@ public class ClassroomService {
             if (request.archived()) {
                 classroom.archive();
             } else {
+                if (classroom.isArchived() && classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(
+                        teacherId, classroom.getName())) {
+                    throw new ConflictException("Classroom name is already in use");
+                }
                 classroom.unarchive();
             }
         }

@@ -5,6 +5,7 @@ import java.util.UUID;
 public record CreatedTeacherResponse(
         UUID id,
         String username,
+        String fullName,
         String email,
         String institution,
         String temporaryPassword) {

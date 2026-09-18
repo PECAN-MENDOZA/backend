@@ -63,7 +63,8 @@ class ResearchTeacherAuthorizationTests {
                 "C",
                 passwordEncoder.encode("Temporary23"),
                 researcherId,
-                true));
+                true,
+                "Docente Demo"));
         teacherId = teacher.getId();
         Classroom classroom = classroomRepository.save(new Classroom(teacher, "3 B"));
         Student student = studentRepository.save(new Student("tigre-" + suffix, "C", "hash"));

@@ -26,17 +26,28 @@ import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import com.mvp.backend.teacher.domain.repository.TeacherRepository;
+
+import tools.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter)
-            throws Exception {
+    SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            JwtAuthenticationConverter jwtAuthenticationConverter,
+            TeacherRepository teacherRepository,
+            ObjectMapper objectMapper) throws Exception {
+        // Se construye aqui (no es @Component) para que Boot no lo registre ademas como filtro
+        // de servlet fuera de la cadena de seguridad.
+        var temporaryPasswordFilter = new TemporaryPasswordFilter(teacherRepository, objectMapper);
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
@@ -48,10 +59,16 @@ public class SecurityConfig {
                         // Defensa en profundidad: los controladores repiten estas reglas con @PreAuthorize,
                         // pero un endpoint nuevo bajo estos prefijos queda protegido aunque olvide la anotacion.
                         .requestMatchers("/api/v1/research/**").hasRole("RESEARCHER")
-                        .requestMatchers("/api/v1/tests/**", "/api/v1/attempts/**").hasRole("STUDENT")
+                        .requestMatchers("/api/v1/teachers/**", "/api/v1/kpis/**", "/api/v1/reports/**")
+                        .hasRole("TEACHER")
+                        .requestMatchers("/api/v1/tests/**", "/api/v1/attempts/**", "/api/v1/students/**",
+                                "/api/v1/corrections/**")
+                        .hasRole("STUDENT")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)))
+                // Tras la autorizacion: solo docentes ya autorizados pagan la lectura del flag.
+                .addFilterAfter(temporaryPasswordFilter, AuthorizationFilter.class)
                 .build();
     }
 

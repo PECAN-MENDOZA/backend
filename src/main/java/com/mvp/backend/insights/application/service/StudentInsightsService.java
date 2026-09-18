@@ -153,7 +153,7 @@ public class StudentInsightsService {
     }
 
     private List<CorrectionSession> sessionsInPeriod(UUID studentId, Period period, Pageable pageable) {
-        return sessionRepository.findByStudentIdInAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtDesc(
+        return sessionRepository.findInPeriodByStudentIds(
                 List.of(studentId), period.start(), period.end(), pageable);
     }
 

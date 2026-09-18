@@ -2,6 +2,7 @@ package com.mvp.backend.teacher.presentation;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -53,6 +54,29 @@ class ClassroomAuthorizationTests {
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].pin").isString())
                 .andExpect(jsonPath("$[0].classroomId").value(classroomId.toString()));
+    }
+
+    @Test
+    void archivedClassroomNameCanBeReusedButActiveDuplicateIsConflict() throws Exception {
+        mockMvc.perform(post("/api/v1/teachers/classrooms").with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"3.º B\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Classroom name is already in use"));
+
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", classroomId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"archived\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.archivedAt").isNotEmpty());
+
+        mockMvc.perform(post("/api/v1/teachers/classrooms").with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"3.º B\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("3.º B"));
+
+        // Desarchivar el antiguo chocaria con el nuevo activo.
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", classroomId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"archived\":false}"))
+                .andExpect(status().isConflict());
     }
 
     @Test

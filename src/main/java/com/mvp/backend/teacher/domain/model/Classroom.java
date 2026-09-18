@@ -11,15 +11,14 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+// La unicidad (teacher_id, name) solo rige entre salones activos: es un indice parcial en Postgres
+// (V15) que H2 no soporta, asi que no se declara en JPA y la valida ClassroomService.
 @Entity
-@Table(
-        name = "classrooms",
-        uniqueConstraints = @UniqueConstraint(name = "uk_classroom_teacher_name", columnNames = {"teacher_id", "name"}))
+@Table(name = "classrooms")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Classroom {

@@ -32,6 +32,7 @@ import com.mvp.backend.shared.security.PersonalDataCipher;
 public class DemoDataSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DemoDataSeeder.class);
+    private static final String DEMO_TEST_CODE = "PRUEBA-DEMO";
 
     private final DemoSeedProperties properties;
     private final JdbcTemplate jdbcTemplate;
@@ -147,6 +148,11 @@ public class DemoDataSeeder implements ApplicationRunner {
             log.info("Demo test seed skipped: no researcher account found for {}.", researcherEmail);
             return;
         }
+        // Sin reset la prueba puede sobrevivir a una semilla anterior (uk de codigo): no se duplica.
+        if (countRows("sentence_tests", "code = ?", DEMO_TEST_CODE) > 0) {
+            log.info("Demo test seed skipped: {} already exists.", DEMO_TEST_CODE);
+            return;
+        }
         UUID testId = UUID.randomUUID();
         jdbcTemplate.update(
                 """
@@ -154,7 +160,7 @@ public class DemoDataSeeder implements ApplicationRunner {
                 values (?, ?, ?, 'DRAFT', ?, ?, ?)
                 """,
                 testId,
-                "PRUEBA-DEMO",
+                DEMO_TEST_CODE,
                 "Prueba de demostracion",
                 "Prueba de ejemplo para explorar el flujo de investigador sin afectar datos reales.",
                 researchers.getFirst(),
@@ -163,7 +169,7 @@ public class DemoDataSeeder implements ApplicationRunner {
         for (int index = 0; index < sentences.size(); index++) {
             insertTestSentence(testId, index + 1, sentences.get(index));
         }
-        log.info("Demo test seeded: {} ({} sentences).", "PRUEBA-DEMO", sentences.size());
+        log.info("Demo test seeded: {} ({} sentences).", DEMO_TEST_CODE, sentences.size());
     }
 
     private void insertTestSentence(UUID testId, int position, DemoSentence sentence) {
@@ -318,9 +324,10 @@ public class DemoDataSeeder implements ApplicationRunner {
         return students;
     }
 
+    /** Catorce dias de sesiones que terminan antes de {@code now}: ninguna queda en el futuro. */
     private List<SessionSeed> buildSessions(List<StudentSeed> students, Instant now) throws Exception {
         List<CorrectionTemplate> templates = correctionTemplates();
-        Instant start = now.minus(13, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
+        Instant start = now.minus(14, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS);
         List<SessionSeed> sessions = new ArrayList<>();
 
         for (int day = 0; day < 14; day++) {
@@ -330,6 +337,9 @@ public class DemoDataSeeder implements ApplicationRunner {
                 CorrectionTemplate template = templates.get((day + studentIndex) % templates.size());
                 Instant createdAt = dayBase.plus(8 + (studentIndex % 5), ChronoUnit.HOURS)
                         .plus(studentIndex * 7L, ChronoUnit.MINUTES);
+                if (createdAt.isAfter(now)) {
+                    createdAt = now;
+                }
                 boolean accepted = ((day + studentIndex) % 5) != 0;
                 long responseTime = 210 + (studentIndex * 9L) + (day * 6L);
                 String suggestionsJson = objectMapper.writeValueAsString(List.of(
@@ -449,6 +459,12 @@ public class DemoDataSeeder implements ApplicationRunner {
 
     private long countRows(String tableName) {
         Long value = jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
+        return value == null ? 0 : value;
+    }
+
+    private long countRows(String tableName, String where, Object... args) {
+        Long value = jdbcTemplate.queryForObject(
+                "select count(*) from " + tableName + " where " + where, Long.class, args);
         return value == null ? 0 : value;
     }
 

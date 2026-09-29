@@ -3,12 +3,14 @@ package com.mvp.backend.sentencetest.application.service;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Alineacion palabra a palabra por programacion dinamica entre la referencia dictada y lo escrito.
  * Coste 1 por sustitucion, omision, insercion, union de dos palabras en una (aver) o separacion de
- * una palabra en dos (tam bien). Tokens exactos: tildes y mayusculas cuentan; la puntuacion de los
- * bordes no. Misma semantica que exact_token_edits_v1 de evaluate.py (IA).
+ * una palabra en dos (tam bien). Las tildes cuentan; las mayusculas y la puntuacion de los bordes
+ * no (decision del 2026-09-29: la IA no capitaliza, asi que contar "el -> El" sesgaba la condicion con
+ * ayuda). A diferencia de exact_token_edits_v1 de evaluate.py (IA), que si distingue mayusculas.
  */
 public final class SentenceAligner {
 
@@ -72,6 +74,11 @@ public final class SentenceAligner {
         return raw.substring(start, end);
     }
 
+    /** Misma palabra sin distinguir mayusculas (las tildes si distinguen: el / él). */
+    static boolean sameWord(String a, String b) {
+        return a.toLowerCase(Locale.ROOT).equals(b.toLowerCase(Locale.ROOT));
+    }
+
     public static Alignment align(String reference, String written) {
         List<String> r = tokenize(reference);
         List<String> w = tokenize(written);
@@ -87,15 +94,15 @@ public final class SentenceAligner {
         for (int j = 1; j <= m; j++) { cost[0][j] = j; op[0][j] = 3; }
         for (int i = 1; i <= n; i++) {
             for (int j = 1; j <= m; j++) {
-                boolean same = r.get(i - 1).equals(w.get(j - 1));
+                boolean same = sameWord(r.get(i - 1), w.get(j - 1));
                 int best = cost[i - 1][j - 1] + (same ? 0 : 1);
                 int bestOp = same ? 0 : 1;
                 if (cost[i - 1][j] + 1 < best) { best = cost[i - 1][j] + 1; bestOp = 2; }
                 if (cost[i][j - 1] + 1 < best) { best = cost[i][j - 1] + 1; bestOp = 3; }
-                if (i >= 2 && (r.get(i - 2) + r.get(i - 1)).equals(w.get(j - 1)) && cost[i - 2][j - 1] + 1 < best) {
+                if (i >= 2 && sameWord(r.get(i - 2) + r.get(i - 1), w.get(j - 1)) && cost[i - 2][j - 1] + 1 < best) {
                     best = cost[i - 2][j - 1] + 1; bestOp = 4;
                 }
-                if (j >= 2 && r.get(i - 1).equals(w.get(j - 2) + w.get(j - 1)) && cost[i - 1][j - 2] + 1 < best) {
+                if (j >= 2 && sameWord(r.get(i - 1), w.get(j - 2) + w.get(j - 1)) && cost[i - 1][j - 2] + 1 < best) {
                     best = cost[i - 1][j - 2] + 1; bestOp = 5;
                 }
                 cost[i][j] = best;

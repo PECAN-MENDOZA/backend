@@ -37,9 +37,21 @@ class SentenceAlignerTests {
     }
 
     @Test
-    void accentsAndInitialCapitalCount() {
+    void accentsCountButCapitalsDoNot() {
+        // Tildes: sí (Él/El, está/esta, aquí/aqui).
         assertThat(SentenceAligner.align("Él está aquí.", "El esta aqui").errorCount()).isEqualTo(3);
-        assertThat(SentenceAligner.align("María canta.", "maría canta").errorCount()).isEqualTo(1);
+        // Mayúsculas: no (la IA no capitaliza; contarlas sesgaba la condición con ayuda).
+        assertThat(SentenceAligner.align("María canta.", "maría canta").errorCount()).isZero();
+        assertThat(SentenceAligner.align("El perro de mi tía se cayó en el río.", "el perro de mi tía se cayó en el río")
+                .errorCount()).isZero();
+        // La ñ sigue contando aunque cambie la mayúscula: Mañana / manana.
+        assertThat(SentenceAligner.align("Mañana voy.", "manana voy").errorCount()).isEqualTo(1);
+    }
+
+    @Test
+    void segmentationIgnoresCapitals() {
+        assertThat(SentenceAligner.align("A ver si vienes.", "aver si vienes").errorCount()).isEqualTo(1);
+        assertThat(SentenceAligner.align("También vino.", "tam bién vino").errorCount()).isEqualTo(1);
     }
 
     @Test

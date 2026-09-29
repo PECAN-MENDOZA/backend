@@ -220,7 +220,7 @@ class StudentInsightsServiceTests {
         assertThat(edited.originalText()).isEqualTo("ola");
         assertThat(edited.finalText()).isEqualTo("hola amigo");
         assertThat(edited.outcome()).isEqualTo("EDITED");
-        assertThat(edited.outcomeLabel()).isEqualTo("Resolvió solo");
+        assertThat(edited.outcomeLabel()).isEqualTo("Aceptó y editó");
         assertThat(edited.inTest()).isFalse();
         assertThat(edited.assistance()).isNull();
         assertThat(edited.testCode()).isNull();

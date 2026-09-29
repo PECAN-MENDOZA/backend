@@ -119,7 +119,7 @@ public class SimplePdfGenerator {
         table.setWidthPercentage(100);
         table.getDefaultCell().setBorder(Rectangle.NO_BORDER);
         table.addCell(metricCell("Correcciones pedidas", help.total()));
-        table.addCell(metricCell("Resolvió solo", help.edited()));
+        table.addCell(metricCell("Aceptó y editó", help.edited()));
         table.addCell(metricCell("Aceptó", help.accepted()));
         table.addCell(metricCell("Rechazó", help.rejected()));
         table.addCell(metricCell("Deshizo", help.undone()));

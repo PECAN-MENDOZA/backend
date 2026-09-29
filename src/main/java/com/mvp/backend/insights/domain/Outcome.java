@@ -2,7 +2,7 @@ package com.mvp.backend.insights.domain;
 
 /** Desenlace de una correccion, derivado de accepted_correction, was_edited y feedback_reason. */
 public enum Outcome {
-    EDITED("Resolvió solo"),
+    EDITED("Aceptó y editó"),
     ACCEPTED("Aceptó"),
     REJECTED("Rechazó"),
     UNDONE("Deshizo"),

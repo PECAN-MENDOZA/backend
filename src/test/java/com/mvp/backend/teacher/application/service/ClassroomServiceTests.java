@@ -170,6 +170,42 @@ class ClassroomServiceTests {
     }
 
     @Test
+    void createsSequentialUsernamesWithFixedPinSkippingTakenNumbers() {
+        Classroom classroom = new Classroom(teacher, "5.º B");
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+        when(studentRepository.existsByUsername(anyString()))
+                .thenAnswer(inv -> List.of("alumno_01", "alumno_03").contains(inv.getArgument(0, String.class)));
+        when(passwordEncoder.encode("1234")).thenReturn("encoded-1234");
+        when(studentRepository.save(any(Student.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(personalDataCipher.encrypt("")).thenReturn("cipher-empty");
+        when(linkRepository.save(any(TeacherStudentLink.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var created = service.createStudents(teacherId, classroom.getId(),
+                new CreateClassroomStudentsRequest(null, null, 3, "alumno", "1234"));
+
+        assertThat(created).extracting(c -> c.username()).containsExactly("alumno_02", "alumno_04", "alumno_05");
+        assertThat(created).extracting(c -> c.pin()).containsOnly("1234");
+        verify(passwordEncoder, times(3)).encode("1234");
+    }
+
+    @Test
+    void withoutPrefixOrPinKeepsRandomAliasesAndPins() {
+        Classroom classroom = new Classroom(teacher, "5.º B");
+        when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));
+        when(studentRepository.existsByUsername(anyString())).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded-pin");
+        when(studentRepository.save(any(Student.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(personalDataCipher.encrypt("")).thenReturn("cipher-empty");
+        when(linkRepository.save(any(TeacherStudentLink.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var created = service.createStudents(teacherId, classroom.getId(),
+                new CreateClassroomStudentsRequest(null, null, 2, null, null));
+
+        assertThat(created).extracting(c -> c.username()).allMatch(u -> u.matches("[a-z]+-\\d{2,4}"));
+        assertThat(created).extracting(c -> c.pin()).allMatch(p -> p.matches("\\d{4}"));
+    }
+
+    @Test
     void rejectsStudentNameAndCountTogether() {
         Classroom classroom = new Classroom(teacher, "3.º B");
         when(classroomRepository.findByIdAndTeacherId(classroom.getId(), teacherId)).thenReturn(Optional.of(classroom));

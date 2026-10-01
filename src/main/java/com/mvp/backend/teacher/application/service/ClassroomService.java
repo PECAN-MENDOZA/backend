@@ -2,6 +2,7 @@ package com.mvp.backend.teacher.application.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -131,16 +132,31 @@ public class ClassroomService {
         int count = named ? 1 : request.count();
         String realName = named ? request.studentRealName().trim() : "";
         List<CreatedStudentAccountResponse> created = new ArrayList<>(count);
+        String prefix = request.usernamePrefix();
+        int sequence = 1;
         for (int i = 0; i < count; i++) {
-            created.add(createStudent(classroom, realName, named ? request.notes() : null));
+            String username = null;
+            if (prefix != null) {
+                // alumno_01, alumno_02...: salta los números ya usados (también de otros salones).
+                while (studentRepository.existsByUsername(sequentialUsername(prefix, sequence))) {
+                    sequence++;
+                }
+                username = sequentialUsername(prefix, sequence++);
+            }
+            created.add(createStudent(classroom, realName, named ? request.notes() : null, username, request.pin()));
         }
         return created;
     }
 
-    private CreatedStudentAccountResponse createStudent(Classroom classroom, String realName, String notes) {
+    private static String sequentialUsername(String prefix, int number) {
+        return String.format(Locale.ROOT, "%s_%02d", prefix, number);
+    }
+
+    private CreatedStudentAccountResponse createStudent(
+            Classroom classroom, String realName, String notes, String fixedUsername, String fixedPin) {
         Teacher teacher = classroom.getTeacher();
-        String username = credentials.newAlias();
-        String pin = credentials.newPin();
+        String username = fixedUsername != null ? fixedUsername : credentials.newAlias();
+        String pin = fixedPin != null ? fixedPin : credentials.newPin();
         Student student = studentRepository.save(
                 new Student(username, teacher.getInstitution(), passwordEncoder.encode(pin)));
         TeacherStudentLink link = linkRepository.save(new TeacherStudentLink(

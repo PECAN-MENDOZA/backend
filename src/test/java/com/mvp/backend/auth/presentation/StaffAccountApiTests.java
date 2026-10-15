@@ -125,21 +125,6 @@ class StaffAccountApiTests {
                 .andExpect(status().isConflict());
     }
 
-    @Test
-    void fiveFailedLoginsLockTheEmailEvenWithTheRightPassword() throws Exception {
-        for (int i = 0; i < 5; i++) {
-            mockMvc.perform(staffLogin(teacher.getEmail(), "Equivocada" + i)).andExpect(status().isUnauthorized());
-        }
-        mockMvc.perform(staffLogin(teacher.getEmail().toUpperCase(), "Docente2026"))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(jsonPath("$.message").value("Too many login attempts"));
-        mockMvc.perform(post("/api/v1/auth/teachers/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"" + teacher.getEmail() + "\",\"password\":\"Docente2026\"}"))
-                .andExpect(status().isTooManyRequests());
-        // Otra cuenta no se ve afectada.
-        mockMvc.perform(staffLogin(researcher.getEmail(), "Investiga2026")).andExpect(status().isOk());
-    }
-
     private static RequestBuilder change(RequestPostProcessor auth, String current, String next) {
         return post(CHANGE).with(auth)
                 .contentType(MediaType.APPLICATION_JSON)

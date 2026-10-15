@@ -37,7 +37,6 @@ public class AuthService {
     private final TeacherStudentLinkRepository linkRepository;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
-    private final LoginAttemptLimiter limiter;
     private final String dummyHash;
 
     public AuthService(
@@ -46,15 +45,13 @@ public class AuthService {
             ResearcherRepository researcherRepository,
             TeacherStudentLinkRepository linkRepository,
             PasswordEncoder passwordEncoder,
-            TokenService tokenService,
-            LoginAttemptLimiter limiter) {
+            TokenService tokenService) {
         this.studentRepository = studentRepository;
         this.teacherRepository = teacherRepository;
         this.researcherRepository = researcherRepository;
         this.linkRepository = linkRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
-        this.limiter = limiter;
         this.dummyHash = passwordEncoder.encode("staff-login-dummy-" + UUID.randomUUID());
     }
 
@@ -64,30 +61,24 @@ public class AuthService {
      */
     @Transactional
     public AuthResponse loginStudent(StudentLoginRequest request) {
-        String key = LoginAttemptLimiter.studentKey(request.username());
-        limiter.checkAllowed(key);
         var student = studentRepository.findByUsername(request.username()).orElse(null);
         if (student == null || !passwordEncoder.matches(request.password(), student.getPasswordHash())) {
-            throw failedLogin(key, INVALID_STUDENT);
+            throw new UnauthorizedException(INVALID_STUDENT);
         }
         List<TeacherStudentLink> activeLinks = linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId());
         if (activeLinks.isEmpty()) {
-            throw failedLogin(key, INVALID_STUDENT);
+            throw new UnauthorizedException(INVALID_STUDENT);
         }
         activeLinks.forEach(TeacherStudentLink::registerAccess);
-        limiter.recordSuccess(key);
         return tokenService.issue(student.getId(), UserRole.STUDENT);
     }
 
     @Transactional(readOnly = true)
     public AuthResponse loginTeacher(TeacherLoginRequest request) {
-        String key = LoginAttemptLimiter.staffKey(request.email());
-        limiter.checkAllowed(key);
         var teacher = teacherRepository.findByEmailIgnoreCase(request.email().trim()).orElse(null);
         if (teacher == null || !passwordEncoder.matches(request.password(), teacher.getPasswordHash())) {
-            throw failedLogin(key, INVALID_TEACHER);
+            throw new UnauthorizedException(INVALID_TEACHER);
         }
-        limiter.recordSuccess(key);
         return issueTeacher(teacher);
     }
 
@@ -97,8 +88,6 @@ public class AuthService {
      */
     @Transactional(readOnly = true)
     public AuthResponse loginStaff(StaffLoginRequest request) {
-        String key = LoginAttemptLimiter.staffKey(request.email());
-        limiter.checkAllowed(key);
         String email = request.email().trim();
         var researcher = researcherRepository.findByEmailIgnoreCase(email);
         var teacher = teacherRepository.findByEmailIgnoreCase(email);
@@ -107,15 +96,13 @@ public class AuthService {
         boolean teacherMatches = passwordEncoder.matches(request.password(),
                 teacher.map(t -> t.getPasswordHash()).orElse(dummyHash));
         if (researcher.isPresent() && researcherMatches) {
-            limiter.recordSuccess(key);
-            // El investigador no guarda nombre: el portal usa el derivado del correo.
+                // El investigador no guarda nombre: el portal usa el derivado del correo.
             return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER, false, null);
         }
         if (teacher.isPresent() && teacherMatches) {
-            limiter.recordSuccess(key);
-            return issueTeacher(teacher.get());
+                return issueTeacher(teacher.get());
         }
-        throw failedLogin(key, INVALID_STAFF);
+        throw new UnauthorizedException(INVALID_STAFF);
     }
 
     @Transactional
@@ -153,11 +140,6 @@ public class AuthService {
         String fullName = teacher.getFullName();
         String displayName = fullName == null || fullName.isBlank() ? null : fullName;
         return tokenService.issue(teacher.getId(), UserRole.TEACHER, teacher.isMustChangePassword(), displayName);
-    }
-
-    private UnauthorizedException failedLogin(String key, String message) {
-        limiter.recordFailure(key);
-        return new UnauthorizedException(message);
     }
 
     private static void requireDifferent(ChangePasswordRequest request) {

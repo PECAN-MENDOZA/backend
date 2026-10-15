@@ -38,11 +38,6 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, exception.getMessage(), request, Map.of());
     }
 
-    @ExceptionHandler(TooManyRequestsException.class)
-    ResponseEntity<ApiError> handleTooManyRequests(TooManyRequestsException exception, HttpServletRequest request) {
-        return error(HttpStatus.TOO_MANY_REQUESTS, exception.getMessage(), request, Map.of());
-    }
-
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiError> handleBusiness(BusinessException exception, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, exception.getMessage(), request, Map.of());

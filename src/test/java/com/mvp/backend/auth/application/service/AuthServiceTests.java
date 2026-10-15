@@ -8,7 +8,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -30,7 +29,6 @@ import com.mvp.backend.auth.domain.model.UserRole;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.shared.exception.BusinessException;
-import com.mvp.backend.shared.exception.TooManyRequestsException;
 import com.mvp.backend.shared.exception.UnauthorizedException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
@@ -61,17 +59,13 @@ class AuthServiceTests {
     @Mock
     private TeacherStudentLinkRepository linkRepository;
 
-    private final MutableClock clock = new MutableClock(Instant.parse("2026-10-15T15:00:00Z"));
-    private LoginAttemptLimiter limiter;
-
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
-        limiter = new LoginAttemptLimiter(clock);
         authService = new AuthService(studentRepository, teacherRepository, researcherRepository, linkRepository,
-                passwordEncoder, tokenService, limiter);
+                passwordEncoder, tokenService);
     }
 
     @Test
@@ -219,45 +213,6 @@ class AuthServiceTests {
 
         assertThat(link.getLastAccessAt()).isNotNull();
         verify(tokenService).issue(student.getId(), UserRole.STUDENT);
-    }
-
-    @Test
-    void fiveFailedLoginsLockTheAliasEvenWithTheRightPinAndSuccessResets() {
-        var student = new Student("tigre-07", "School", "pin-hash");
-        var teacher = new Teacher("ana", "ana@x.edu", null, "School", "hash");
-        var link = new TeacherStudentLink(teacher, student, new Classroom(teacher, "3.º B"), "cipher", null);
-        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
-        when(passwordEncoder.matches("0000", "pin-hash")).thenReturn(false);
-        when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
-        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
-
-        // Cuatro fallos y un acierto: el acierto reinicia el contador.
-        for (int i = 0; i < 4; i++) {
-            assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "0000")))
-                    .isInstanceOf(UnauthorizedException.class);
-        }
-        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
-        for (int i = 0; i < 5; i++) {
-            assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "0000")))
-                    .isInstanceOf(UnauthorizedException.class);
-        }
-        assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("TIGRE-07", "1234")))
-                .isInstanceOf(TooManyRequestsException.class)
-                .hasMessage("Too many login attempts");
-
-        clock.advance(Duration.ofMinutes(15));
-        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
-    }
-
-    @Test
-    void staffLoginIsLockedPerEmailIgnoringCase() {
-        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
-        for (int i = 0; i < 5; i++) {
-            assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("Ana@X.edu", "wrong")))
-                    .isInstanceOf(UnauthorizedException.class);
-        }
-        assertThatThrownBy(() -> authService.loginTeacher(new TeacherLoginRequest("ana@x.edu", "Password123")))
-                .isInstanceOf(TooManyRequestsException.class);
     }
 
     @Test

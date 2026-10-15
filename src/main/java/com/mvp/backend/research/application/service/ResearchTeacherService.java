@@ -94,14 +94,57 @@ public class ResearchTeacherService {
                         teacher.getCreatedAt(),
                         teacher.isMustChangePassword(),
                         classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacher.getId()).size(),
-                        linkRepository.countByTeacherIdAndDeletedAtIsNull(teacher.getId())))
+                        linkRepository.countByTeacherIdAndDeletedAtIsNull(teacher.getId()),
+                        teacher.getDeactivatedAt()))
                 .toList();
+    }
+
+    /** Baja del docente: no entra al panel y sus alumnos no entran al teclado. No se borra nada. */
+    @Transactional
+    public TeacherSummaryResponse deactivateTeacher(UUID teacherId) {
+        Teacher teacher = requireTeacher(teacherId);
+        if (teacher.isDeactivated()) {
+            throw new ConflictException("Teacher is already deactivated");
+        }
+        teacher.deactivate();
+        return summary(teacher);
+    }
+
+    @Transactional
+    public TeacherSummaryResponse reactivateTeacher(UUID teacherId) {
+        Teacher teacher = requireTeacher(teacherId);
+        if (!teacher.isDeactivated()) {
+            throw new ConflictException("Teacher is already active");
+        }
+        teacher.reactivate();
+        return summary(teacher);
+    }
+
+    private Teacher requireTeacher(UUID teacherId) {
+        return teacherRepository.findById(teacherId)
+                .orElseThrow(() -> new NotFoundException("Teacher not found"));
+    }
+
+    private TeacherSummaryResponse summary(Teacher teacher) {
+        return new TeacherSummaryResponse(
+                teacher.getId(),
+                teacher.getUsername(),
+                teacher.getFullName(),
+                teacher.getEmail(),
+                teacher.getInstitution(),
+                teacher.getCreatedAt(),
+                teacher.isMustChangePassword(),
+                classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacher.getId()).size(),
+                linkRepository.countByTeacherIdAndDeletedAtIsNull(teacher.getId()),
+                teacher.getDeactivatedAt());
     }
 
     @Transactional
     public TemporaryPasswordResponse resetPassword(UUID teacherId) {
-        Teacher teacher = teacherRepository.findById(teacherId)
-                .orElseThrow(() -> new NotFoundException("Teacher not found"));
+        Teacher teacher = requireTeacher(teacherId);
+        if (teacher.isDeactivated()) {
+            throw new ConflictException("Teacher is deactivated");
+        }
         String temporaryPassword = passwords.next();
         teacher.assignTemporaryPassword(passwordEncoder.encode(temporaryPassword));
         return new TemporaryPasswordResponse(teacher.getId(), temporaryPassword);
@@ -136,6 +179,7 @@ public class ResearchTeacherService {
                 classroom.getTeacher().getId(),
                 classroom.getTeacher().getUsername(),
                 classroom.isArchived(),
+                classroom.getTeacher().isDeactivated(),
                 students);
     }
 

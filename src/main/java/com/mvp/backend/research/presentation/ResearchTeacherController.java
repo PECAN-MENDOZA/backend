@@ -52,6 +52,16 @@ public class ResearchTeacherController {
         return service.resetPassword(teacherId);
     }
 
+    @PostMapping("/teachers/{teacherId}/deactivate")
+    public TeacherSummaryResponse deactivate(@PathVariable UUID teacherId) {
+        return service.deactivateTeacher(teacherId);
+    }
+
+    @PostMapping("/teachers/{teacherId}/reactivate")
+    public TeacherSummaryResponse reactivate(@PathVariable UUID teacherId) {
+        return service.reactivateTeacher(teacherId);
+    }
+
     @GetMapping("/classrooms")
     public List<ClassroomDirectoryResponse> classrooms() {
         return service.classroomDirectory();

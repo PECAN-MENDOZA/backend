@@ -12,5 +12,6 @@ public record TeacherSummaryResponse(
         Instant createdAt,
         boolean mustChangePassword,
         long classroomCount,
-        long studentCount) {
+        long studentCount,
+        Instant deactivatedAt) {
 }

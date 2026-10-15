@@ -11,6 +11,7 @@ public record ClassroomDirectoryResponse(
         UUID teacherId,
         String teacherUsername,
         boolean archived,
+        boolean teacherDeactivated,
         List<StudentEntry> students) {
 
     /** lastActivityAt: ultima sesion de correccion del alumno (null si nunca escribio). */

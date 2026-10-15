@@ -29,6 +29,11 @@ public interface TeacherStudentLinkRepository extends JpaRepository<TeacherStude
 
     boolean existsByStudentIdAndDeletedAtIsNull(UUID studentId);
 
+    // Acceso del alumno: vinculo activo con un docente que no fue dado de baja.
+    List<TeacherStudentLink> findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(UUID studentId);
+
+    boolean existsByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(UUID studentId);
+
     List<TeacherStudentLink> findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(UUID classroomId);
 
     long countByClassroomIdAndDeletedAtIsNull(UUID classroomId);

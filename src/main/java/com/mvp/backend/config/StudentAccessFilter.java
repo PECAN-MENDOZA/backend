@@ -104,7 +104,7 @@ public class StudentAccessFilter extends OncePerRequestFilter {
                 && issuedBefore(authentication, student.getCredentialsChangedAt())) {
             return false;
         }
-        return linkRepository.existsByStudentIdAndDeletedAtIsNull(studentId);
+        return linkRepository.existsByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(studentId);
     }
 
     /** iat del JWT anterior al cambio, en segundos (el iat del JWT no tiene fraccion). Sin iat: se rechaza. */

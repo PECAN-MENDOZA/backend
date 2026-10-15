@@ -48,6 +48,10 @@ public class Teacher {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** Baja por el investigador: sin acceso al panel ni sus alumnos al teclado. */
+    @Column(name = "deactivated_at")
+    private Instant deactivatedAt;
+
     public Teacher(String username, String email, String phone, String institution, String passwordHash) {
         this(username, email, phone, institution, passwordHash, null, false, null);
     }
@@ -89,5 +93,19 @@ public class Teacher {
     public void assignTemporaryPassword(String passwordHash) {
         this.passwordHash = passwordHash;
         this.mustChangePassword = true;
+    }
+
+    public void deactivate() {
+        if (deactivatedAt == null) {
+            deactivatedAt = Instant.now();
+        }
+    }
+
+    public void reactivate() {
+        deactivatedAt = null;
+    }
+
+    public boolean isDeactivated() {
+        return deactivatedAt != null;
     }
 }

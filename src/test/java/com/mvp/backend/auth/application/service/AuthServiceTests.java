@@ -194,7 +194,7 @@ class AuthServiceTests {
         var student = new Student("tigre-07", "School", "pin-hash");
         when(studentRepository.findByUsernameIgnoreCase("tigre-07")).thenReturn(Optional.of(student));
         when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
-        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of());
+        when(linkRepository.findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(student.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "1234")))
                 .isInstanceOf(UnauthorizedException.class)
@@ -209,7 +209,7 @@ class AuthServiceTests {
         // El alias llega con espacios y mayuscula inicial (como lo deja el celular): se busca sin distinguirlas.
         when(studentRepository.findByUsernameIgnoreCase("Tigre-07")).thenReturn(Optional.of(student));
         when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
-        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
+        when(linkRepository.findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(student.getId())).thenReturn(List.of(link));
 
         authService.loginStudent(new StudentLoginRequest(" Tigre-07 ", "1234"));
 

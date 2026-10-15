@@ -65,7 +65,7 @@ public class AuthService {
         if (student == null || !passwordEncoder.matches(request.password(), student.getPasswordHash())) {
             throw new UnauthorizedException(INVALID_STUDENT);
         }
-        List<TeacherStudentLink> activeLinks = linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId());
+        List<TeacherStudentLink> activeLinks = linkRepository.findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(student.getId());
         if (activeLinks.isEmpty()) {
             throw new UnauthorizedException(INVALID_STUDENT);
         }
@@ -76,7 +76,8 @@ public class AuthService {
     @Transactional(readOnly = true)
     public AuthResponse loginTeacher(TeacherLoginRequest request) {
         var teacher = teacherRepository.findByEmailIgnoreCase(request.email().trim()).orElse(null);
-        if (teacher == null || !passwordEncoder.matches(request.password(), teacher.getPasswordHash())) {
+        if (teacher == null || !passwordEncoder.matches(request.password(), teacher.getPasswordHash())
+                || teacher.isDeactivated()) {
             throw new UnauthorizedException(INVALID_TEACHER);
         }
         return issueTeacher(teacher);
@@ -99,7 +100,8 @@ public class AuthService {
                 // El investigador no guarda nombre: el portal usa el derivado del correo.
             return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER, false, null);
         }
-        if (teacher.isPresent() && teacherMatches) {
+        // Un docente dado de baja no entra, con el mismo mensaje que una contrasena errada.
+        if (teacher.isPresent() && teacherMatches && !teacher.get().isDeactivated()) {
                 return issueTeacher(teacher.get());
         }
         throw new UnauthorizedException(INVALID_STAFF);

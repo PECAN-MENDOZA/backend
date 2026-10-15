@@ -150,7 +150,8 @@ public class ClassroomInsightsService {
                 counts.getOrDefault(Outcome.ACCEPTED, 0L),
                 counts.getOrDefault(Outcome.REJECTED, 0L),
                 counts.getOrDefault(Outcome.UNDONE, 0L),
-                counts.getOrDefault(Outcome.UNANSWERED, 0L));
+                counts.getOrDefault(Outcome.UNANSWERED, 0L),
+                counts.getOrDefault(Outcome.NO_CHANGES, 0L));
     }
 
     private RecentCorrectionItem toItem(CorrectionSession session, TeacherStudentLink link) {

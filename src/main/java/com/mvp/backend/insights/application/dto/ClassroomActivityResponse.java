@@ -21,6 +21,7 @@ public record ClassroomActivityResponse(
             OutcomeCounts outcomes) {
     }
 
-    public record OutcomeCounts(long edited, long accepted, long rejected, long undone, long unanswered) {
+    public record OutcomeCounts(
+            long edited, long accepted, long rejected, long undone, long unanswered, long noChanges) {
     }
 }

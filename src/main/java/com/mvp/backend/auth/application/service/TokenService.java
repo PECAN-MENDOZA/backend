@@ -24,10 +24,11 @@ public class TokenService {
     }
 
     public AuthResponse issue(UUID userId, UserRole role) {
-        return issue(userId, role, false);
+        return issue(userId, role, false, null);
     }
 
-    public AuthResponse issue(UUID userId, UserRole role, boolean mustChangePassword) {
+    /** displayName solo viaja en la respuesta (nombre visible en el portal), no en el JWT. */
+    public AuthResponse issue(UUID userId, UserRole role, boolean mustChangePassword, String displayName) {
         Instant issuedAt = Instant.now();
         Instant expiresAt = issuedAt.plus(properties.tokenTtl());
         JwtClaimsSet claims = JwtClaimsSet.builder()
@@ -38,6 +39,6 @@ public class TokenService {
                 .claim("role", role.name())
                 .build();
         String token = jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
-        return new AuthResponse(userId, token, expiresAt, role, mustChangePassword);
+        return new AuthResponse(userId, token, expiresAt, role, mustChangePassword, displayName);
     }
 }

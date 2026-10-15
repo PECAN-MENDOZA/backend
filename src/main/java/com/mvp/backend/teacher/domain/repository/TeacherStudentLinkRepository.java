@@ -18,6 +18,17 @@ public interface TeacherStudentLinkRepository extends JpaRepository<TeacherStude
 
     boolean existsByTeacherIdAndStudentIdAndDeletedAtIsNull(UUID teacherId, UUID studentId);
 
+    // Vinculo del docente con el alumno, activo o dado de baja (reactivar).
+    Optional<TeacherStudentLink> findByTeacherIdAndStudentId(UUID teacherId, UUID studentId);
+
+    // Vinculos dados de baja del docente, la baja mas reciente primero.
+    List<TeacherStudentLink> findByTeacherIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(UUID teacherId);
+
+    // Vinculos activos del alumno con cualquier docente (acceso y "ultimo acceso").
+    List<TeacherStudentLink> findByStudentIdAndDeletedAtIsNull(UUID studentId);
+
+    boolean existsByStudentIdAndDeletedAtIsNull(UUID studentId);
+
     List<TeacherStudentLink> findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(UUID classroomId);
 
     long countByClassroomIdAndDeletedAtIsNull(UUID classroomId);

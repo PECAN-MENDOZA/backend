@@ -36,6 +36,11 @@ public class Researcher {
         this.passwordHash = passwordHash;
     }
 
+    /** Contrasena elegida por el investigador. */
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
     @PrePersist
     void onCreate() {
         if (createdAt == null) {

@@ -57,8 +57,9 @@ public class ResearchTeacherService {
 
     @Transactional
     public CreatedTeacherResponse createTeacher(UUID researcherId, CreateTeacherRequest request) {
-        String email = request.email().trim();
-        if (teacherRepository.existsByEmail(email) || researcherRepository.findByEmail(email).isPresent()) {
+        // El correo se guarda en minusculas y el duplicado se busca sin distinguir mayusculas.
+        String email = request.email().trim().toLowerCase(Locale.ROOT);
+        if (teacherRepository.existsByEmailIgnoreCase(email) || researcherRepository.existsByEmailIgnoreCase(email)) {
             throw new ConflictException("Email is already in use");
         }
         String username = uniqueUsername(email);

@@ -208,6 +208,39 @@ class InsightsAuthorizationTests {
     }
 
     @Test
+    void sessionWhereTheAiOfferedNothingDifferentIsNoChangesWhateverTheAnswer() throws Exception {
+        // "Tu texto ya esta bien escrito": la IA devolvio el mismo texto y el teclado lo registro como rechazo.
+        Student student = studentRepository.findById(studentId).orElseThrow();
+        CorrectionSession fine = new CorrectionSession(student, "Fui al parque.");
+        fine.complete("Fui al parque.", 0, "[\"Fui al parque.\"]", 90L);
+        fine.registerFeedback(null, null, false, 0, null);
+        sessionRepository.save(fine);
+
+        mockMvc.perform(get(STUDENT + "/help", studentId).with(teacher(teacherId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.accepted").value(1))
+                .andExpect(jsonPath("$.rejected").value(0))
+                .andExpect(jsonPath("$.noChanges").value(1))
+                .andExpect(jsonPath("$.noChangesPct").value(50.0));
+        mockMvc.perform(get(BASE + "/activity", classroomId).with(teacher(teacherId)))
+                .andExpect(jsonPath("$.students[0].outcomes.noChanges").value(1))
+                .andExpect(jsonPath("$.students[0].outcomes.rejected").value(0));
+        mockMvc.perform(get(STUDENT + "/writings", studentId).with(teacher(teacherId)))
+                .andExpect(jsonPath("$[?(@.sessionId == '" + fine.getId() + "')].outcome").value("NO_CHANGES"))
+                .andExpect(jsonPath("$[?(@.sessionId == '" + fine.getId() + "')].outcomeLabel")
+                        .value("Ya estaba bien"));
+        mockMvc.perform(get(BASE + "/corrections/recent", classroomId).with(teacher(teacherId)))
+                .andExpect(jsonPath("$[?(@.sessionId == '" + fine.getId() + "')].outcome").value("NO_CHANGES"));
+        // La tasa de aceptacion no cuenta la sesion "Ya estaba bien".
+        mockMvc.perform(get("/api/v1/kpis/students/{id}/acceptance-rate", studentId).with(teacher(teacherId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total_envios").value(1))
+                .andExpect(jsonPath("$.total_rechazadas").value(0))
+                .andExpect(jsonPath("$.tasa_aceptacion_pct").value(100.0));
+    }
+
+    @Test
     void anotherTeacherCannotSeeTheStudent() throws Exception {
         for (String path : new String[] {"/errors", "/help", "/writings", "/tests"}) {
             mockMvc.perform(get(STUDENT + path, studentId).with(teacher(otherTeacherId)))

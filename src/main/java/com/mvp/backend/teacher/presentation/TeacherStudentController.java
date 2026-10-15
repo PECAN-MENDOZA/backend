@@ -39,6 +39,16 @@ public class TeacherStudentController {
         return teacherStudentService.listStudents(UUID.fromString(jwt.getSubject()));
     }
 
+    @GetMapping("/inactive")
+    public List<StudentLinkResponse> listInactiveStudents(@AuthenticationPrincipal Jwt jwt) {
+        return teacherStudentService.listInactiveStudents(UUID.fromString(jwt.getSubject()));
+    }
+
+    @PostMapping("/{studentId}/reactivate")
+    public StudentLinkResponse reactivate(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID studentId) {
+        return teacherStudentService.reactivateStudent(UUID.fromString(jwt.getSubject()), studentId);
+    }
+
     @PostMapping("/{studentId}/reset-pin")
     public ResetStudentPinResponse resetPin(
             @AuthenticationPrincipal Jwt jwt,

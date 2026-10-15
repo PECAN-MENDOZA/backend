@@ -124,6 +124,9 @@ public class SimplePdfGenerator {
         table.addCell(metricCell("Rechazó", help.rejected()));
         table.addCell(metricCell("Deshizo", help.undone()));
         table.addCell(metricCell("Sin respuesta", help.unanswered()));
+        table.addCell(metricCell("Ya estaba bien", help.noChanges()));
+        // Siete tarjetas en tres columnas: completa la ultima fila (una fila incompleta no se dibuja).
+        table.completeRow();
         return table;
     }
 

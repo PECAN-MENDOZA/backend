@@ -40,6 +40,8 @@ import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.NotFoundException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 @Service
 public class CorrectionService {
@@ -55,6 +57,7 @@ public class CorrectionService {
     private final AiCorrectionClient aiCorrectionClient;
     private final StudentTestService studentTestService;
     private final TestAttemptRepository attemptRepository;
+    private final TeacherStudentLinkRepository linkRepository;
     private final TransactionTemplate readOnlyTransaction;
     private final TransactionTemplate writeTransaction;
     private final ObjectMapper objectMapper;
@@ -66,6 +69,7 @@ public class CorrectionService {
             AiCorrectionClient aiCorrectionClient,
             StudentTestService studentTestService,
             TestAttemptRepository attemptRepository,
+            TeacherStudentLinkRepository linkRepository,
             PlatformTransactionManager transactionManager,
             ObjectMapper objectMapper) {
         this.studentRepository = studentRepository;
@@ -74,6 +78,7 @@ public class CorrectionService {
         this.aiCorrectionClient = aiCorrectionClient;
         this.studentTestService = studentTestService;
         this.attemptRepository = attemptRepository;
+        this.linkRepository = linkRepository;
         // process() corre en dos fases con la llamada a la IA fuera de toda transaccion (ver process).
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
@@ -151,6 +156,9 @@ public class CorrectionService {
         }
         var student = requireStudent(preflight.studentId());
         var session = sessionRepository.save(new CorrectionSession(student, originalText, response));
+        // Pedir una correccion cuenta como acceso del alumno en todos sus vinculos activos.
+        linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())
+                .forEach(TeacherStudentLink::registerAccess);
         if (attempt != null && !attempt.recordModelVersion(aiResponse.modelVersion())) {
             // El intento ya fue atendido por otra version del modelo: se audita en el intento y en la
             // respuesta, no se oculta ni se rechaza.

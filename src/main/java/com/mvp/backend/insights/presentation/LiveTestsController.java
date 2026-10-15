@@ -3,6 +3,7 @@ package com.mvp.backend.insights.presentation;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -13,6 +14,7 @@ import com.mvp.backend.insights.application.dto.LiveAttemptItem;
 import com.mvp.backend.insights.application.service.LiveTestsService;
 
 /** Panel del docente: prueba en curso de sus alumnos vinculados (el portal la consulta cada 5 s). */
+@ConditionalOnProperty(prefix = "app.features", name = "sentence-tests", havingValue = "true")
 @RestController
 @PreAuthorize("hasRole('TEACHER')")
 public class LiveTestsController {

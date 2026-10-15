@@ -9,9 +9,12 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.mvp.backend.correction.application.service.OfferedSuggestions;
+import com.mvp.backend.correction.domain.model.CorrectionSession;
 import com.mvp.backend.correction.domain.model.ErrorType;
 import com.mvp.backend.correction.domain.repository.CorrectionSessionRepository;
 import com.mvp.backend.correction.domain.repository.WordCorrectionRepository;
@@ -50,19 +53,19 @@ public class KpiService {
         this.clock = clock;
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public AcceptanceRateResponse acceptanceRate(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
         return acceptanceRate(studentId, Period.parse(from, to, clock));
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public TopWordsResponse topWords(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
         return topWords(studentId, Period.parse(from, to, clock));
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public KpiSummaryResponse summary(UUID teacherId, UUID studentId, String from, String to) {
         TeacherStudentLink link = requireLink(teacherId, studentId);
         Period period = Period.parse(from, to, clock);
@@ -77,6 +80,11 @@ public class KpiService {
                 topWords.topWords());
     }
 
+    /**
+     * Tasa de aceptacion sin las sesiones "Ya estaba bien" (NO_CHANGES): no hubo nada que aceptar, asi
+     * que salen del denominador y de cada conteo. El resumen sale de la consulta agregada y se le restan
+     * esas sesiones, que se identifican en memoria (la comparacion necesita leer suggestions_json).
+     */
     private AcceptanceRateResponse acceptanceRate(UUID studentId, Period period) {
         var result = sessionRepository.acceptanceSummary(studentId, period.start(), period.end());
         long total = number(result.getTotalSessions());
@@ -84,6 +92,24 @@ public class KpiService {
         long rejected = number(result.getRejectedSessions());
         long unanswered = number(result.getUnansweredSessions());
         long edited = number(result.getEditedSessions());
+        for (CorrectionSession session : sessionRepository.findInPeriodByStudentIds(
+                List.of(studentId), period.start(), period.end(), Pageable.unpaged())) {
+            if (!OfferedSuggestions.noChanges(
+                    session.getOriginalText(), session.getCorrectedText(), session.getSuggestionsJson())) {
+                continue;
+            }
+            total--;
+            if (session.getAcceptedCorrection() == null) {
+                unanswered--;
+            } else if (session.getAcceptedCorrection()) {
+                accepted--;
+            } else {
+                rejected--;
+            }
+            if (session.isWasEdited()) {
+                edited--;
+            }
+        }
         return new AcceptanceRateResponse(
                 studentId,
                 period.from().toString(),
@@ -108,7 +134,7 @@ public class KpiService {
         return new TopWordsResponse(studentId, period.from().toString(), period.to().toString(), words);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public ErrorTypesResponse errorTypes(UUID teacherId, UUID studentId, String from, String to) {
         requireLink(teacherId, studentId);
         Period period = Period.parse(from, to, clock);
@@ -133,10 +159,9 @@ public class KpiService {
     }
 
     private TeacherStudentLink requireLink(UUID teacherId, UUID studentId) {
-        TeacherStudentLink link = linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId)
+        // Consultar la ficha no cuenta como acceso del alumno (lastAccessAt solo lo mueve el alumno).
+        return linkRepository.findByTeacherIdAndStudentIdAndDeletedAtIsNull(teacherId, studentId)
                 .orElseThrow(() -> new ForbiddenException("Teacher does not have access to this student"));
-        link.registerAccess();
-        return link;
     }
 
     private long number(Object value) {

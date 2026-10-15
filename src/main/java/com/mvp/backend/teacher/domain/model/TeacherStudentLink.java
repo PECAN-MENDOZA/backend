@@ -96,6 +96,11 @@ public class TeacherStudentLink {
         }
     }
 
+    /** Deshace la baja: el alumno vuelve a las listas del docente y recupera el acceso. */
+    public void reactivate() {
+        this.deletedAt = null;
+    }
+
     public boolean isDeleted() {
         return deletedAt != null;
     }

@@ -3,6 +3,7 @@ package com.mvp.backend.sentencetest.presentation;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,6 +30,7 @@ import com.mvp.backend.sentencetest.application.service.StudentTestService;
 import jakarta.validation.Valid;
 
 /** API del alumno (teclado): pruebas asignadas, intento y Comenzar/Terminar por oracion. */
+@ConditionalOnProperty(prefix = "app.features", name = "sentence-tests", havingValue = "true")
 @RestController
 @RequestMapping("/api/v1")
 @PreAuthorize("hasRole('STUDENT')")

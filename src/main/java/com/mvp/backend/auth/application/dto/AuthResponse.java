@@ -10,5 +10,7 @@ public record AuthResponse(
         String token,
         Instant expiresAt,
         UserRole role,
-        boolean mustChangePassword) {
+        boolean mustChangePassword,
+        // Nombre visible: fullName del docente; null si no lo hay (investigador, docente sin nombre).
+        String displayName) {
 }

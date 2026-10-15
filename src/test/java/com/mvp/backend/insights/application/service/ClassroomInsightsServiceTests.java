@@ -124,17 +124,17 @@ class ClassroomInsightsServiceTests {
         assertThat(first.correctionsInPeriod()).isEqualTo(2);
         // La ultima actividad se toma sin limite de periodo.
         assertThat(first.lastActivityAt()).isEqualTo(afterPeriod);
-        assertThat(first.outcomes()).isEqualTo(new ClassroomActivityResponse.OutcomeCounts(1, 0, 0, 1, 0));
+        assertThat(first.outcomes()).isEqualTo(new ClassroomActivityResponse.OutcomeCounts(1, 0, 0, 1, 0, 0));
 
         assertThat(response.students().get(1).outcomes())
-                .isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 0, 0, 0, 1));
+                .isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 0, 0, 0, 1, 0));
         assertThat(response.students().get(2).outcomes())
-                .isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 1, 0, 0, 0));
+                .isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 1, 0, 0, 0, 0));
 
         var last = response.students().get(3);
         assertThat(last.correctionsInPeriod()).isZero();
         assertThat(last.lastActivityAt()).isNull();
-        assertThat(last.outcomes()).isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 0, 0, 0, 0));
+        assertThat(last.outcomes()).isEqualTo(new ClassroomActivityResponse.OutcomeCounts(0, 0, 0, 0, 0, 0));
     }
 
     @Test

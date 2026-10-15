@@ -8,7 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,14 +24,21 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import com.mvp.backend.auth.application.dto.AuthResponse;
 import com.mvp.backend.auth.application.dto.ChangePasswordRequest;
 import com.mvp.backend.auth.application.dto.StaffLoginRequest;
+import com.mvp.backend.auth.application.dto.StudentLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
+import com.mvp.backend.shared.exception.BusinessException;
+import com.mvp.backend.shared.exception.TooManyRequestsException;
 import com.mvp.backend.shared.exception.UnauthorizedException;
+import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
 import com.mvp.backend.teacher.domain.model.Teacher;
+import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTests {
@@ -49,28 +58,36 @@ class AuthServiceTests {
     @Mock
     private TokenService tokenService;
 
+    @Mock
+    private TeacherStudentLinkRepository linkRepository;
+
+    private final MutableClock clock = new MutableClock(Instant.parse("2026-10-15T15:00:00Z"));
+    private LoginAttemptLimiter limiter;
+
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
-        authService = new AuthService(
-                studentRepository, teacherRepository, researcherRepository, passwordEncoder, tokenService);
+        limiter = new LoginAttemptLimiter(clock);
+        authService = new AuthService(studentRepository, teacherRepository, researcherRepository, linkRepository,
+                passwordEncoder, tokenService, limiter);
     }
 
     @Test
     void logsTeacherInUsingEmail() {
         var teacher = new Teacher(
                 "teacher_01", "teacher@upc.edu", null, "UPC", "encoded-password", UUID.randomUUID(), true, null);
-        when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
+        when(teacherRepository.findByEmailIgnoreCase("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(true);
-        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true))
+        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true, null))
                 .thenReturn(new AuthResponse(
                         teacher.getId(),
                         "token",
                         Instant.now().plusSeconds(3600),
                         UserRole.TEACHER,
-                        true));
+                        true,
+                        null));
 
         AuthResponse response = authService.loginTeacher(new TeacherLoginRequest("teacher@upc.edu", "Password123"));
 
@@ -82,12 +99,12 @@ class AuthServiceTests {
     @Test
     void logsResearcherInUsingEmail() {
         var researcher = new Researcher("authors@tesis.local", "encoded-password");
-        when(researcherRepository.findByEmail("authors@tesis.local"))
+        when(researcherRepository.findByEmailIgnoreCase("authors@tesis.local"))
                 .thenReturn(Optional.of(researcher));
         when(passwordEncoder.matches("Research123", "encoded-password")).thenReturn(true);
-        when(tokenService.issue(researcher.getId(), UserRole.RESEARCHER))
+        when(tokenService.issue(researcher.getId(), UserRole.RESEARCHER, false, null))
                 .thenReturn(new AuthResponse(
-                        researcher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.RESEARCHER, false));
+                        researcher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.RESEARCHER, false, null));
 
         AuthResponse response = authService.loginStaff(
                 new StaffLoginRequest("authors@tesis.local", "Research123"));
@@ -97,8 +114,8 @@ class AuthServiceTests {
 
     @Test
     void unknownStaffEmailStillRunsAPasswordComparison() {
-        when(researcherRepository.findByEmail("nobody@x.test")).thenReturn(Optional.empty());
-        when(teacherRepository.findByEmail("nobody@x.test")).thenReturn(Optional.empty());
+        when(researcherRepository.findByEmailIgnoreCase("nobody@x.test")).thenReturn(Optional.empty());
+        when(teacherRepository.findByEmailIgnoreCase("nobody@x.test")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("nobody@x.test", "whatever")))
                 .isInstanceOf(UnauthorizedException.class)
@@ -112,10 +129,10 @@ class AuthServiceTests {
         var researcher = new Researcher("authors@tesis.local", "researcher-hash");
         var teacher = new Teacher(
                 "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true, null);
-        when(researcherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.of(researcher));
-        when(teacherRepository.findByEmail("authors@tesis.local")).thenReturn(Optional.empty());
-        when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
-        when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
+        when(researcherRepository.findByEmailIgnoreCase("authors@tesis.local")).thenReturn(Optional.of(researcher));
+        when(teacherRepository.findByEmailIgnoreCase("authors@tesis.local")).thenReturn(Optional.empty());
+        when(researcherRepository.findByEmailIgnoreCase("teacher@upc.edu")).thenReturn(Optional.empty());
+        when(teacherRepository.findByEmailIgnoreCase("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("authors@tesis.local", "wrong")))
@@ -135,13 +152,13 @@ class AuthServiceTests {
     void teacherWithTheRightPasswordLogsInThroughStaffLoginWithTwoComparisons() {
         var teacher = new Teacher(
                 "teacher_01", "teacher@upc.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), true, null);
-        when(researcherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.empty());
-        when(teacherRepository.findByEmail("teacher@upc.edu")).thenReturn(Optional.of(teacher));
+        when(researcherRepository.findByEmailIgnoreCase("teacher@upc.edu")).thenReturn(Optional.empty());
+        when(teacherRepository.findByEmailIgnoreCase("teacher@upc.edu")).thenReturn(Optional.of(teacher));
         when(passwordEncoder.matches("Password123", "teacher-hash")).thenReturn(true);
         when(passwordEncoder.matches("Password123", "encoded-password")).thenReturn(false); // dummy researcher side
-        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true))
+        when(tokenService.issue(teacher.getId(), UserRole.TEACHER, true, null))
                 .thenReturn(new AuthResponse(
-                        teacher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.TEACHER, true));
+                        teacher.getId(), "token", Instant.now().plusSeconds(3600), UserRole.TEACHER, true, null));
 
         AuthResponse response = authService.loginStaff(new StaffLoginRequest("teacher@upc.edu", "Password123"));
 
@@ -176,5 +193,112 @@ class AuthServiceTests {
                 teacher.getId(), new ChangePasswordRequest("Wrong123", "Permanent45")))
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessage("Invalid teacher credentials");
+    }
+    @Test
+    void studentWithoutActiveLinkCannotLogInWithTheSameMessageAsAWrongPin() {
+        var student = new Student("tigre-07", "School", "pin-hash");
+        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
+        when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
+        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "1234")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid student credentials");
+    }
+
+    @Test
+    void studentLoginMarksLastAccessOnEveryActiveLink() {
+        var student = new Student("tigre-07", "School", "pin-hash");
+        var teacher = new Teacher("ana", "ana@x.edu", null, "School", "hash");
+        var link = new TeacherStudentLink(teacher, student, new Classroom(teacher, "3.º B"), "cipher", null);
+        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
+        when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
+        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
+
+        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
+
+        assertThat(link.getLastAccessAt()).isNotNull();
+        verify(tokenService).issue(student.getId(), UserRole.STUDENT);
+    }
+
+    @Test
+    void fiveFailedLoginsLockTheAliasEvenWithTheRightPinAndSuccessResets() {
+        var student = new Student("tigre-07", "School", "pin-hash");
+        var teacher = new Teacher("ana", "ana@x.edu", null, "School", "hash");
+        var link = new TeacherStudentLink(teacher, student, new Classroom(teacher, "3.º B"), "cipher", null);
+        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
+        when(passwordEncoder.matches("0000", "pin-hash")).thenReturn(false);
+        when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
+        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
+
+        // Cuatro fallos y un acierto: el acierto reinicia el contador.
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "0000")))
+                    .isInstanceOf(UnauthorizedException.class);
+        }
+        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "0000")))
+                    .isInstanceOf(UnauthorizedException.class);
+        }
+        assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("TIGRE-07", "1234")))
+                .isInstanceOf(TooManyRequestsException.class)
+                .hasMessage("Too many login attempts");
+
+        clock.advance(Duration.ofMinutes(15));
+        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
+    }
+
+    @Test
+    void staffLoginIsLockedPerEmailIgnoringCase() {
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("Ana@X.edu", "wrong")))
+                    .isInstanceOf(UnauthorizedException.class);
+        }
+        assertThatThrownBy(() -> authService.loginTeacher(new TeacherLoginRequest("ana@x.edu", "Password123")))
+                .isInstanceOf(TooManyRequestsException.class);
+    }
+
+    @Test
+    void teacherLoginReturnsFullNameAsDisplayName() {
+        var teacher = new Teacher(
+                "ana.qa", "ana.qa@x.edu", null, "UPC", "teacher-hash", UUID.randomUUID(), false, "Ana QA Torres");
+        when(teacherRepository.findByEmailIgnoreCase("ANA.QA@x.edu")).thenReturn(Optional.of(teacher));
+        when(passwordEncoder.matches("Password123", "teacher-hash")).thenReturn(true);
+
+        authService.loginTeacher(new TeacherLoginRequest("ANA.QA@x.edu", "Password123"));
+
+        verify(tokenService).issue(teacher.getId(), UserRole.TEACHER, false, "Ana QA Torres");
+    }
+
+    @Test
+    void researcherChangesOwnPassword() {
+        var researcher = new Researcher("authors@tesis.local", "old-hash");
+        when(researcherRepository.findById(researcher.getId())).thenReturn(Optional.of(researcher));
+        when(passwordEncoder.matches("Research123", "old-hash")).thenReturn(true);
+        when(passwordEncoder.encode("Research456")).thenReturn("new-hash");
+
+        authService.changeStaffPassword(
+                researcher.getId(), UserRole.RESEARCHER, new ChangePasswordRequest("Research123", "Research456"));
+
+        assertThat(researcher.getPasswordHash()).isEqualTo("new-hash");
+    }
+
+    @Test
+    void staffChangePasswordRejectsWrongCurrentAndSamePassword() {
+        var teacher = new Teacher(
+                "teacher_01", "teacher@upc.edu", null, "UPC", "current-hash", UUID.randomUUID(), false, null);
+        when(teacherRepository.findById(teacher.getId())).thenReturn(Optional.of(teacher));
+        when(passwordEncoder.matches("Wrong12345", "current-hash")).thenReturn(false);
+        when(passwordEncoder.matches("Current123", "current-hash")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.changeStaffPassword(
+                teacher.getId(), UserRole.TEACHER, new ChangePasswordRequest("Wrong12345", "Permanent45")))
+                .isInstanceOf(UnauthorizedException.class);
+        assertThatThrownBy(() -> authService.changeStaffPassword(
+                teacher.getId(), UserRole.TEACHER, new ChangePasswordRequest("Current123", "Current123")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("New password must be different");
     }
 }

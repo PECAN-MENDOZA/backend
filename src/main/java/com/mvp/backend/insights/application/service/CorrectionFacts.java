@@ -3,6 +3,7 @@ package com.mvp.backend.insights.application.service;
 import java.util.Collection;
 import java.util.EnumMap;
 
+import com.mvp.backend.correction.application.service.OfferedSuggestions;
 import com.mvp.backend.correction.domain.model.CorrectionSession;
 import com.mvp.backend.insights.domain.Outcome;
 
@@ -13,7 +14,9 @@ final class CorrectionFacts {
     }
 
     static Outcome outcome(CorrectionSession session) {
-        return Outcome.of(session.getAcceptedCorrection(), session.isWasEdited(), session.getFeedbackReason());
+        return Outcome.of(session.getAcceptedCorrection(), session.isWasEdited(), session.getFeedbackReason(),
+                OfferedSuggestions.noChanges(
+                        session.getOriginalText(), session.getCorrectedText(), session.getSuggestionsJson()));
     }
 
     /** Texto que quedo escrito: final_text si existe; si no, la sugerencia elegida cuando la acepto; si no, el original. */

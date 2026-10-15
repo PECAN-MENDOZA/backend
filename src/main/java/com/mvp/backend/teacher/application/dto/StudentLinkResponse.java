@@ -12,5 +12,7 @@ public record StudentLinkResponse(
         String studentRealName,
         String notes,
         Instant createdAt,
-        Instant lastAccessAt) {
+        Instant lastAccessAt,
+        // Fecha de baja: solo en GET /teachers/students/inactive; null en los listados normales.
+        Instant deactivatedAt) {
 }

@@ -3,6 +3,7 @@ package com.mvp.backend.sentencetest.presentation;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -36,6 +37,7 @@ import com.mvp.backend.sentencetest.application.service.TestResultsService;
 import jakarta.validation.Valid;
 
 /** API del investigador: pruebas, asignacion, intentos, exclusion, anotacion, resultados y exportacion. */
+@ConditionalOnProperty(prefix = "app.features", name = "sentence-tests", havingValue = "true")
 @RestController
 @RequestMapping("/api/v1/research")
 @PreAuthorize("hasRole('RESEARCHER')")

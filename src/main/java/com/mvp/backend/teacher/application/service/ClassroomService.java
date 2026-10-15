@@ -106,11 +106,11 @@ public class ClassroomService {
         return toResponse(classroom, linkRepository.countByClassroomIdAndDeletedAtIsNull(classroomId));
     }
 
-    @Transactional
+    // Listar no cuenta como acceso del alumno: lastAccessAt solo cambia cuando el alumno entra o corrige.
+    @Transactional(readOnly = true)
     public List<StudentLinkResponse> listStudents(UUID teacherId, UUID classroomId) {
         ownedClassroom(teacherId, classroomId);
         return linkRepository.findByClassroomIdAndDeletedAtIsNullOrderByCreatedAtAsc(classroomId).stream()
-                .peek(TeacherStudentLink::registerAccess)
                 .map(link -> TeacherStudentService.toResponse(link, personalDataCipher))
                 .toList();
     }

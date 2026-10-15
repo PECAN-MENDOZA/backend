@@ -21,6 +21,7 @@ import com.mvp.backend.report.application.dto.ReportPdfDocument.WordEntry;
 import com.mvp.backend.report.application.dto.ReportPdfDocument.WritingEntry;
 import com.mvp.backend.report.application.dto.ReportPdfDownload;
 import com.mvp.backend.report.infrastructure.pdf.SimplePdfGenerator;
+import com.mvp.backend.teacher.domain.model.Teacher;
 import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
 
 /** "Reporte del periodo" en PDF: la misma ficha descriptiva del alumno que ve el docente, para imprimir. */
@@ -60,13 +61,13 @@ public class ReportService {
                 TITLE,
                 access.realName(link),
                 link.getStudent().getUsername(),
-                link.getTeacher().getUsername(),
+                teacherName(link.getTeacher()),
                 period.label(),
                 period.from().toString(),
                 period.to().toString(),
                 clock.instant(),
                 new HelpSummary(help.total(), help.edited(), help.accepted(), help.rejected(), help.undone(),
-                        help.unanswered()),
+                        help.unanswered(), help.noChanges()),
                 errors.types().stream()
                         .map(type -> new ErrorTypeSection(type.label(), type.count(),
                                 words(type.examples().stream().limit(EXAMPLES_PER_TYPE).toList())))
@@ -80,6 +81,12 @@ public class ReportService {
 
         String filename = "reporte-" + link.getStudent().getUsername() + "-" + period.from() + "_" + period.to() + ".pdf";
         return new ReportPdfDownload(filename, pdfGenerator.generate(document));
+    }
+
+    /** Nombre completo del docente; si no lo tiene, su usuario como antes. */
+    private static String teacherName(Teacher teacher) {
+        String fullName = teacher.getFullName();
+        return fullName == null || fullName.isBlank() ? teacher.getUsername() : fullName;
     }
 
     private static List<WordEntry> words(List<WordPair> pairs) {

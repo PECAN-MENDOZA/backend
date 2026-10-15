@@ -101,16 +101,18 @@ public class StudentInsightsService {
         long rejected = counts.getOrDefault(Outcome.REJECTED, 0L);
         long undone = counts.getOrDefault(Outcome.UNDONE, 0L);
         long unanswered = counts.getOrDefault(Outcome.UNANSWERED, 0L);
+        long noChanges = counts.getOrDefault(Outcome.NO_CHANGES, 0L);
         return new StudentHelpResponse(
                 studentId,
                 period.from().toString(),
                 period.to().toString(),
-                total, edited, accepted, rejected, undone, unanswered,
+                total, edited, accepted, rejected, undone, unanswered, noChanges,
                 percentage(edited, total),
                 percentage(accepted, total),
                 percentage(rejected, total),
                 percentage(undone, total),
-                percentage(unanswered, total));
+                percentage(unanswered, total),
+                percentage(noChanges, total));
     }
 
     @Transactional(readOnly = true)

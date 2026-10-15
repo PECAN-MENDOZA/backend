@@ -14,7 +14,12 @@ public interface TeacherRepository extends JpaRepository<Teacher, UUID> {
 
     Optional<Teacher> findByEmail(String email);
 
+    // El correo no distingue mayusculas: login y chequeo de duplicados.
+    Optional<Teacher> findByEmailIgnoreCase(String email);
+
     boolean existsByEmail(String email);
+
+    boolean existsByEmailIgnoreCase(String email);
 
     boolean existsByUsername(String username);
 }

@@ -86,7 +86,7 @@ class ReportServiceTests {
         assertThat(document.from()).isEqualTo(FROM);
         assertThat(document.to()).isEqualTo(TO);
         assertThat(document.generatedAt()).isEqualTo(clock.instant());
-        assertThat(document.help()).isEqualTo(new ReportPdfDocument.HelpSummary(5, 2, 1, 1, 0, 1));
+        assertThat(document.help()).isEqualTo(new ReportPdfDocument.HelpSummary(6, 2, 1, 1, 0, 1, 1));
         assertThat(document.errorTypes()).hasSize(2);
         assertThat(document.errorTypes().get(0).label()).isEqualTo("Tildes y acentuación");
         assertThat(document.errorTypes().get(0).count()).isEqualTo(6);
@@ -109,7 +109,7 @@ class ReportServiceTests {
         when(access.link(teacherId, ana.getId())).thenReturn(link);
         when(access.realName(link)).thenReturn("Ana Pérez");
         when(insights.help(teacherId, ana.getId(), null, null))
-                .thenReturn(new StudentHelpResponse(ana.getId(), "2026-09-18", "2026-09-18", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+                .thenReturn(new StudentHelpResponse(ana.getId(), "2026-09-18", "2026-09-18", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         when(insights.errors(teacherId, ana.getId(), null, null)).thenReturn(
                 new StudentErrorsResponse(ana.getId(), "2026-09-18", "2026-09-18", 0, List.of(), List.of()));
         when(insights.writings(teacherId, ana.getId(), null, null, 20)).thenReturn(List.of());
@@ -124,6 +124,28 @@ class ReportServiceTests {
         assertThat(captor.getValue().periodLabel()).isEqualTo("2026-09-18");
         assertThat(captor.getValue().errorTypes()).isEmpty();
         assertThat(captor.getValue().writings()).isEmpty();
+    }
+
+    @Test
+    void teacherFullNameIsUsedWhenPresent() {
+        Teacher named = new Teacher("ana.qa", "ana.qa@colegio.edu.pe", null, "Colegio", "hash", null, false,
+                "Ana QA Torres");
+        TeacherStudentLink namedLink = new TeacherStudentLink(named, ana, new Classroom(named, "4.º A"), "enc", null);
+        when(access.link(teacherId, ana.getId())).thenReturn(namedLink);
+        when(access.realName(namedLink)).thenReturn("Ana Pérez");
+        when(insights.help(teacherId, ana.getId(), FROM, TO))
+                .thenReturn(new StudentHelpResponse(ana.getId(), FROM, TO, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        when(insights.errors(teacherId, ana.getId(), FROM, TO)).thenReturn(
+                new StudentErrorsResponse(ana.getId(), FROM, TO, 0, List.of(), List.of()));
+        when(insights.writings(teacherId, ana.getId(), FROM, TO, 20)).thenReturn(List.of());
+        when(pdfGenerator.generate(any(ReportPdfDocument.class))).thenReturn(new byte[] {1});
+        ReportService service = new ReportService(access, insights, pdfGenerator, clock);
+
+        service.downloadPdf(teacherId, ana.getId(), FROM, TO);
+
+        ArgumentCaptor<ReportPdfDocument> captor = ArgumentCaptor.forClass(ReportPdfDocument.class);
+        verify(pdfGenerator).generate(captor.capture());
+        assertThat(captor.getValue().teacherName()).isEqualTo("Ana QA Torres");
     }
 
     @Test
@@ -150,7 +172,7 @@ class ReportServiceTests {
         when(access.link(teacherId, ana.getId())).thenReturn(link);
         when(access.realName(link)).thenReturn("Ana Pérez");
         when(insights.help(teacherId, ana.getId(), FROM, TO))
-                .thenReturn(new StudentHelpResponse(ana.getId(), FROM, TO, 5, 2, 1, 1, 0, 1, 40.0, 20.0, 20.0, 0, 20.0));
+                .thenReturn(new StudentHelpResponse(ana.getId(), FROM, TO, 6, 2, 1, 1, 0, 1, 1, 33.33, 16.67, 16.67, 0, 16.67, 16.67));
         when(insights.errors(teacherId, ana.getId(), FROM, TO)).thenReturn(new StudentErrorsResponse(
                 ana.getId(), FROM, TO, 7,
                 List.of(

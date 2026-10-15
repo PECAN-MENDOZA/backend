@@ -53,11 +53,12 @@ public class ResearcherAccountSeeder implements ApplicationRunner {
         if (email == null || email.isBlank() || password == null || password.isBlank()) {
             return;
         }
-        if (researcherRepository.findByEmail(email).isPresent()) {
+        // Mismo criterio que el login: el correo no distingue mayusculas.
+        if (researcherRepository.findByEmailIgnoreCase(email.trim()).isPresent()) {
             log.info("Researcher account already seeded for {}", email);
             return;
         }
-        if (teacherRepository.existsByEmail(email)) {
+        if (teacherRepository.existsByEmailIgnoreCase(email.trim())) {
             throw new IllegalStateException(
                     "Cannot seed researcher account: email " + email + " is already registered as a teacher");
         }

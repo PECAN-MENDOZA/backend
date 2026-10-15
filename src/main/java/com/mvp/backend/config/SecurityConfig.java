@@ -31,7 +31,9 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import com.mvp.backend.student.domain.repository.StudentRepository;
 import com.mvp.backend.teacher.domain.repository.TeacherRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -44,10 +46,13 @@ public class SecurityConfig {
             HttpSecurity http,
             JwtAuthenticationConverter jwtAuthenticationConverter,
             TeacherRepository teacherRepository,
+            StudentRepository studentRepository,
+            TeacherStudentLinkRepository linkRepository,
             ObjectMapper objectMapper) throws Exception {
         // Se construye aqui (no es @Component) para que Boot no lo registre ademas como filtro
         // de servlet fuera de la cadena de seguridad.
         var temporaryPasswordFilter = new TemporaryPasswordFilter(teacherRepository, objectMapper);
+        var studentAccessFilter = new StudentAccessFilter(studentRepository, linkRepository, objectMapper);
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
@@ -69,6 +74,8 @@ public class SecurityConfig {
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 // Tras la autorizacion: solo docentes ya autorizados pagan la lectura del flag.
                 .addFilterAfter(temporaryPasswordFilter, AuthorizationFilter.class)
+                // Igual para alumnos: baja o PIN reiniciado cortan la sesion abierta con 401.
+                .addFilterAfter(studentAccessFilter, AuthorizationFilter.class)
                 .build();
     }
 

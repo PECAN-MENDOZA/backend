@@ -46,6 +46,7 @@ import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 /**
  * Reglas de la correccion ligada a una oracion de prueba (spec §1): sin id_respuesta con intento en
@@ -75,6 +76,9 @@ class CorrectionSentenceGuardTests {
     @Mock
     private TestAttemptRepository attemptRepository;
 
+    @Mock
+    private TeacherStudentLinkRepository linkRepository;
+
     private CorrectionService correctionService;
 
     private Student student;
@@ -90,6 +94,7 @@ class CorrectionSentenceGuardTests {
                 aiCorrectionClient,
                 studentTestService,
                 attemptRepository,
+                linkRepository,
                 new NoOpTransactionManager(),
                 new ObjectMapper());
         student = new Student("alumno_prueba", "UPC", "encoded-password");

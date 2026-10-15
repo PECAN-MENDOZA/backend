@@ -33,6 +33,12 @@ import com.mvp.backend.sentencetest.domain.repository.TestAssignmentRepository;
 import com.mvp.backend.sentencetest.domain.repository.TestSentenceRepository;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
+import com.mvp.backend.teacher.domain.model.Teacher;
+import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
+import com.mvp.backend.teacher.domain.repository.ClassroomRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherRepository;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -48,6 +54,9 @@ class StudentTestAuthorizationTests {
     @Autowired private SentenceTestRepository testRepository;
     @Autowired private TestSentenceRepository sentenceRepository;
     @Autowired private TestAssignmentRepository assignmentRepository;
+    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private ClassroomRepository classroomRepository;
+    @Autowired private TeacherStudentLinkRepository linkRepository;
 
     private UUID testId;
     private UUID studentId;
@@ -65,6 +74,11 @@ class StudentTestAuthorizationTests {
         sentenceRepository.save(new TestSentence(test, 2, SentenceKind.FREE, "Una oracion sobre tu mascota", Assistance.UNASSISTED));
         Student student = studentRepository.save(new Student("tigre-" + suffix, "Colegio", "hash"));
         Student other = studentRepository.save(new Student("puma-" + suffix, "Colegio", "hash"));
+        // Un alumno solo usa la API con un vinculo activo (StudentAccessFilter).
+        Teacher teacher = teacherRepository.save(new Teacher("doc-" + suffix, suffix + "@c.edu", null, "Colegio", "hash"));
+        Classroom classroom = classroomRepository.save(new Classroom(teacher, "3.º B"));
+        linkRepository.save(new TeacherStudentLink(teacher, student, classroom, "enc", null));
+        linkRepository.save(new TeacherStudentLink(teacher, other, classroom, "enc", null));
         assignmentRepository.save(new TestAssignment(test, student, null, researcher.getId(), now));
         testId = test.getId();
         studentId = student.getId();

@@ -195,7 +195,7 @@ class StudentInsightsServiceTests {
 
         StudentHelpResponse help = service.help(teacherId, ana.getId(), DAY, DAY);
 
-        assertThat(help).isEqualTo(new StudentHelpResponse(ana.getId(), DAY, DAY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        assertThat(help).isEqualTo(new StudentHelpResponse(ana.getId(), DAY, DAY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     }
 
     @Test

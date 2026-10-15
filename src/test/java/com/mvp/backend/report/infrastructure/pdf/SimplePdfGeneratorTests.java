@@ -25,7 +25,7 @@ class SimplePdfGeneratorTests {
                 "2026-09-10",
                 "2026-09-17",
                 Instant.parse("2026-09-18T01:46:39Z"),
-                new ReportPdfDocument.HelpSummary(14, 3, 8, 2, 0, 1),
+                new ReportPdfDocument.HelpSummary(16, 3, 8, 2, 0, 1, 2),
                 List.of(new ReportPdfDocument.ErrorTypeSection("Tildes y acentuación", 6, List.of(
                         new ReportPdfDocument.WordEntry("camion", "camión", 3),
                         new ReportPdfDocument.WordEntry("papa", "papá", 2)))),
@@ -46,7 +46,7 @@ class SimplePdfGeneratorTests {
         ReportPdfDocument document = new ReportPdfDocument(
                 "Reporte del periodo", "Nicolas Herrera", "student_015", "Sofia Garcia", "2026-09-17",
                 "2026-09-17", "2026-09-17", Instant.parse("2026-09-18T01:46:39Z"),
-                new ReportPdfDocument.HelpSummary(0, 0, 0, 0, 0, 0), List.of(), List.of(), List.of(), null);
+                new ReportPdfDocument.HelpSummary(0, 0, 0, 0, 0, 0, 0), List.of(), List.of(), List.of(), null);
 
         byte[] pdf = generator.generate(document);
 

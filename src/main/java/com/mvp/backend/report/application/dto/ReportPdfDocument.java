@@ -20,7 +20,8 @@ public record ReportPdfDocument(
         String teacherNotes) {
 
     /** Cuantas veces el alumno pidio ayuda en el periodo y que hizo con ella. */
-    public record HelpSummary(long total, long edited, long accepted, long rejected, long undone, long unanswered) {
+    public record HelpSummary(
+            long total, long edited, long accepted, long rejected, long undone, long unanswered, long noChanges) {
     }
 
     public record ErrorTypeSection(String label, long count, List<WordEntry> examples) {

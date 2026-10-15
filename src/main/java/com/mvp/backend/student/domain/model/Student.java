@@ -33,6 +33,10 @@ public class Student {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    // Ultimo reinicio del PIN: los tokens emitidos antes (en segundos) dejan de valer.
+    @Column(name = "credentials_changed_at")
+    private Instant credentialsChangedAt;
+
     public Student(String username, String institution, String passwordHash) {
         this.id = UUID.randomUUID();
         this.username = username;
@@ -49,5 +53,11 @@ public class Student {
 
     public void changePassword(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    /** PIN nuevo asignado por el docente: ademas invalida los tokens emitidos antes de este instante. */
+    public void resetCredentials(String passwordHash, Instant changedAt) {
+        this.passwordHash = passwordHash;
+        this.credentialsChangedAt = changedAt;
     }
 }

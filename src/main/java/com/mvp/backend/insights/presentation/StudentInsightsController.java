@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.mvp.backend.insights.application.dto.StudentErrorsResponse;
 import com.mvp.backend.insights.application.dto.StudentHelpResponse;
-import com.mvp.backend.insights.application.dto.StudentTestSummary;
 import com.mvp.backend.insights.application.dto.StudentWritingItem;
 import com.mvp.backend.insights.application.service.StudentInsightsService;
 
@@ -56,11 +55,6 @@ public class StudentInsightsController {
             @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer limit) {
         return insightsService.writings(teacherId(jwt), studentId, from, to, limit);
-    }
-
-    @GetMapping("/tests")
-    public List<StudentTestSummary> tests(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID studentId) {
-        return insightsService.tests(teacherId(jwt), studentId);
     }
 
     private static UUID teacherId(Jwt jwt) {

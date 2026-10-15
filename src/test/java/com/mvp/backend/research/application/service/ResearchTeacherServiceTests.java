@@ -52,25 +52,26 @@ class ResearchTeacherServiceTests {
 
     @Test
     void createsTeacherWithUsernameFromEmailAndTemporaryPassword() {
-        when(teacherRepository.existsByEmail("Sofia.Garcia@colegio.edu.pe")).thenReturn(false);
-        when(researcherRepository.findByEmail("Sofia.Garcia@colegio.edu.pe")).thenReturn(Optional.empty());
+        when(teacherRepository.existsByEmailIgnoreCase("sofia.garcia@colegio.edu.pe")).thenReturn(false);
+        when(researcherRepository.existsByEmailIgnoreCase("sofia.garcia@colegio.edu.pe")).thenReturn(false);
         when(teacherRepository.existsByUsername("sofia.garcia")).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");
         when(teacherRepository.save(any(Teacher.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var response = service.createTeacher(researcherId,
-                new CreateTeacherRequest("Sofia Garcia", "Sofia.Garcia@colegio.edu.pe", "Colegio San Martin"));
+                new CreateTeacherRequest("Sofia Garcia", " Sofia.Garcia@colegio.edu.pe ", "Colegio San Martin"));
 
         assertThat(response.username()).isEqualTo("sofia.garcia");
         assertThat(response.fullName()).isEqualTo("Sofia Garcia");
-        assertThat(response.email()).isEqualTo("Sofia.Garcia@colegio.edu.pe");
+        // El correo se guarda recortado y en minusculas.
+        assertThat(response.email()).isEqualTo("sofia.garcia@colegio.edu.pe");
         assertThat(response.temporaryPassword()).matches("[A-HJ-NP-Za-km-z2-9]{10}");
     }
 
     @Test
     void usernameCollisionGetsNumericSuffix() {
-        when(teacherRepository.existsByEmail(anyString())).thenReturn(false);
-        when(researcherRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(teacherRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
+        when(researcherRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(teacherRepository.existsByUsername("ana")).thenReturn(true);
         when(teacherRepository.existsByUsername("ana-2")).thenReturn(true);
         when(teacherRepository.existsByUsername("ana-3")).thenReturn(false);
@@ -85,8 +86,8 @@ class ResearchTeacherServiceTests {
     @Test
     void longEmailLocalPartIsTruncatedBeforeSuffix() {
         String base = "a".repeat(70);
-        when(teacherRepository.existsByEmail(anyString())).thenReturn(false);
-        when(researcherRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(teacherRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
+        when(researcherRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(teacherRepository.existsByUsername(base)).thenReturn(true);
         when(teacherRepository.existsByUsername(base + "-2")).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");
@@ -101,10 +102,11 @@ class ResearchTeacherServiceTests {
 
     @Test
     void emailInUseByTeacherOrResearcherIsConflict() {
-        when(teacherRepository.existsByEmail("dup@x.edu")).thenReturn(true);
+        when(teacherRepository.existsByEmailIgnoreCase("dup@x.edu")).thenReturn(true);
 
+        // Mismo correo con otras mayusculas: tambien es duplicado.
         assertThatThrownBy(() -> service.createTeacher(
-                researcherId, new CreateTeacherRequest("D", "dup@x.edu", "X")))
+                researcherId, new CreateTeacherRequest("D", "DUP@X.edu", "X")))
                 .isInstanceOf(ConflictException.class);
     }
 

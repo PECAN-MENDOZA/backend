@@ -40,6 +40,10 @@ import com.mvp.backend.shared.exception.AiServiceException;
 import com.mvp.backend.shared.exception.BusinessException;
 import com.mvp.backend.student.domain.model.Student;
 import com.mvp.backend.student.domain.repository.StudentRepository;
+import com.mvp.backend.teacher.domain.model.Classroom;
+import com.mvp.backend.teacher.domain.model.Teacher;
+import com.mvp.backend.teacher.domain.model.TeacherStudentLink;
+import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 
 @ExtendWith(MockitoExtension.class)
 class CorrectionServiceTests {
@@ -62,6 +66,9 @@ class CorrectionServiceTests {
     @Mock
     private TestAttemptRepository attemptRepository;
 
+    @Mock
+    private TeacherStudentLinkRepository linkRepository;
+
     private CorrectionService correctionService;
 
     private Student student;
@@ -75,6 +82,7 @@ class CorrectionServiceTests {
                 aiCorrectionClient,
                 studentTestService,
                 attemptRepository,
+                linkRepository,
                 new NoOpTransactionManager(),
                 new ObjectMapper());
         student = readyStudent("student_exp");
@@ -104,6 +112,22 @@ class CorrectionServiceTests {
             assertThat(suggestion.recommended()).isTrue();
         });
         assertThat(response.correctedWords()).isEmpty();
+    }
+
+    @Test
+    void correctionMarksLastAccessOnEveryActiveLink() {
+        var student = readyStudent("student_02");
+        var teacher = new Teacher("ana", "ana@x.edu", null, "UPC", "hash");
+        var link = new TeacherStudentLink(teacher, student, new Classroom(teacher, "3.º B"), "cipher", null);
+        when(studentRepository.findById(student.getId())).thenReturn(Optional.of(student));
+        when(sessionRepository.save(any(CorrectionSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(aiCorrectionClient.correct("ola", student.getId()))
+                .thenReturn(new AiCorrectionResponse(student.getId(), "hola", 50, List.of("hola"), null));
+        when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
+
+        correctionService.process(student.getId(), new ProcessCorrectionRequest("ola"));
+
+        assertThat(link.getLastAccessAt()).isNotNull();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.mvp.backend.teacher.application.service;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.mvp.backend.shared.exception.BusinessException;
+import com.mvp.backend.shared.exception.ConflictException;
 import com.mvp.backend.shared.exception.ForbiddenException;
 import com.mvp.backend.shared.security.PersonalDataCipher;
 import com.mvp.backend.student.domain.model.Student;
@@ -42,20 +44,41 @@ public class TeacherStudentService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    @Transactional
+    // Listar no cuenta como acceso del alumno: lastAccessAt solo cambia cuando el alumno entra o corrige.
+    @Transactional(readOnly = true)
     public List<StudentLinkResponse> listStudents(UUID teacherId) {
         return linkRepository.findByTeacherIdAndDeletedAtIsNullOrderByCreatedAtDesc(teacherId).stream()
-                .peek(TeacherStudentLink::registerAccess)
                 .map(link -> toResponse(link, personalDataCipher))
                 .toList();
     }
 
+    /** Alumnos dados de baja por el docente (con deactivatedAt), la baja mas reciente primero. */
+    @Transactional(readOnly = true)
+    public List<StudentLinkResponse> listInactiveStudents(UUID teacherId) {
+        return linkRepository.findByTeacherIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(teacherId).stream()
+                .map(link -> toResponse(link, personalDataCipher))
+                .toList();
+    }
+
+    /** Deshace la baja: 403 si el vinculo no es del docente; 409 si ya esta activo. */
+    @Transactional
+    public StudentLinkResponse reactivateStudent(UUID teacherId, UUID studentId) {
+        TeacherStudentLink link = linkRepository.findByTeacherIdAndStudentId(teacherId, studentId)
+                .orElseThrow(() -> new ForbiddenException("Teacher does not have access to this student"));
+        if (!link.isDeleted()) {
+            throw new ConflictException("Student is already active");
+        }
+        link.reactivate();
+        return toResponse(link, personalDataCipher);
+    }
+
+    /** PIN nuevo; credentials_changed_at = ahora cierra las sesiones abiertas del alumno en el teclado. */
     @Transactional
     public ResetStudentPinResponse resetPin(UUID teacherId, UUID studentId) {
         TeacherStudentLink link = ownedLink(teacherId, studentId);
         Student student = link.getStudent();
         String pin = credentials.newPin();
-        student.changePassword(passwordEncoder.encode(pin));
+        student.resetCredentials(passwordEncoder.encode(pin), Instant.now());
         return new ResetStudentPinResponse(student.getId(), student.getUsername(), pin);
     }
 
@@ -98,6 +121,7 @@ public class TeacherStudentService {
                 cipher.decrypt(link.getEncryptedStudentRealName()),
                 link.getNotes(),
                 link.getCreatedAt(),
-                link.getLastAccessAt());
+                link.getLastAccessAt(),
+                link.getDeletedAt());
     }
 }

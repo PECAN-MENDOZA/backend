@@ -61,7 +61,7 @@ public class AuthService {
      */
     @Transactional
     public AuthResponse loginStudent(StudentLoginRequest request) {
-        var student = studentRepository.findByUsername(request.username()).orElse(null);
+        var student = studentRepository.findByUsernameIgnoreCase(request.username().trim()).orElse(null);
         if (student == null || !passwordEncoder.matches(request.password(), student.getPasswordHash())) {
             throw new UnauthorizedException(INVALID_STUDENT);
         }

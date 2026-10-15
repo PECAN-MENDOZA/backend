@@ -16,6 +16,9 @@ public interface StudentRepository extends JpaRepository<Student, UUID> {
 
     Optional<Student> findByUsername(String username);
 
+    /** Login del alumno: los alias se generan en minusculas y el celular suele poner la primera en mayuscula. */
+    Optional<Student> findByUsernameIgnoreCase(String username);
+
     boolean existsByUsername(String username);
 
     /** Bloqueo de fila para serializar el arranque de intentos por alumno. */

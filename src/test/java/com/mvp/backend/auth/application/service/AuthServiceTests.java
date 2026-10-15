@@ -188,10 +188,11 @@ class AuthServiceTests {
                 .isInstanceOf(UnauthorizedException.class)
                 .hasMessage("Invalid teacher credentials");
     }
+
     @Test
     void studentWithoutActiveLinkCannotLogInWithTheSameMessageAsAWrongPin() {
         var student = new Student("tigre-07", "School", "pin-hash");
-        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
+        when(studentRepository.findByUsernameIgnoreCase("tigre-07")).thenReturn(Optional.of(student));
         when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
         when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of());
 
@@ -205,11 +206,12 @@ class AuthServiceTests {
         var student = new Student("tigre-07", "School", "pin-hash");
         var teacher = new Teacher("ana", "ana@x.edu", null, "School", "hash");
         var link = new TeacherStudentLink(teacher, student, new Classroom(teacher, "3.º B"), "cipher", null);
-        when(studentRepository.findByUsername("tigre-07")).thenReturn(Optional.of(student));
+        // El alias llega con espacios y mayuscula inicial (como lo deja el celular): se busca sin distinguirlas.
+        when(studentRepository.findByUsernameIgnoreCase("Tigre-07")).thenReturn(Optional.of(student));
         when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
         when(linkRepository.findByStudentIdAndDeletedAtIsNull(student.getId())).thenReturn(List.of(link));
 
-        authService.loginStudent(new StudentLoginRequest("tigre-07", "1234"));
+        authService.loginStudent(new StudentLoginRequest(" Tigre-07 ", "1234"));
 
         assertThat(link.getLastAccessAt()).isNotNull();
         verify(tokenService).issue(student.getId(), UserRole.STUDENT);

@@ -21,7 +21,14 @@ public interface ClassroomRepository extends JpaRepository<Classroom, UUID> {
     Optional<Classroom> findByIdAndTeacherId(UUID id, UUID teacherId);
 
     // Solo salones activos: el nombre de un salon archivado puede reutilizarse (indice parcial de V15).
-    boolean existsByTeacherIdAndNameAndArchivedAtIsNull(UUID teacherId, String name);
+    // Sin distinguir mayusculas ("5.º a" choca con "5.º A"); el indice de V15 si las distingue, asi que
+    // la fuente de verdad es esta consulta en el servicio.
+    boolean existsByTeacherIdAndNameIgnoreCaseAndArchivedAtIsNull(UUID teacherId, String name);
+
+    // Igual, sin contar al propio salon (renombrar "5.º a" a "5.º A" o desarchivarlo).
+    boolean existsByTeacherIdAndNameIgnoreCaseAndArchivedAtIsNullAndIdNot(UUID teacherId, String name, UUID id);
 
     List<Classroom> findAllByOrderByCreatedAtAsc();
+
+    long countByTeacherIdAndArchivedAtIsNull(UUID teacherId);
 }

@@ -32,7 +32,7 @@ import tools.jackson.databind.ObjectMapper;
 public class TemporaryPasswordFilter extends OncePerRequestFilter {
 
     static final String MESSAGE = "Password change required";
-    static final String DEACTIVATED_MESSAGE = "Teacher account is deactivated";
+    public static final String DEACTIVATED_MESSAGE = "Teacher account is deactivated";
     private static final String TEACHER_AUTHORITY = "ROLE_TEACHER";
     private static final String AUTH_PREFIX = "/api/v1/auth/";
 

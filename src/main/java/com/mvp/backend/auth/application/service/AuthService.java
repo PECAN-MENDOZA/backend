@@ -13,6 +13,7 @@ import com.mvp.backend.auth.application.dto.StaffLoginRequest;
 import com.mvp.backend.auth.application.dto.StudentLoginRequest;
 import com.mvp.backend.auth.application.dto.TeacherLoginRequest;
 import com.mvp.backend.auth.domain.model.UserRole;
+import com.mvp.backend.config.TemporaryPasswordFilter;
 import com.mvp.backend.research.domain.model.Researcher;
 import com.mvp.backend.research.domain.repository.ResearcherRepository;
 import com.mvp.backend.shared.exception.BusinessException;
@@ -30,6 +31,8 @@ public class AuthService {
     static final String INVALID_TEACHER = "Invalid teacher credentials";
     static final String INVALID_STAFF = "Invalid staff credentials";
     static final String SAME_PASSWORD = "New password must be different";
+    static final String TEACHER_DEACTIVATED = TemporaryPasswordFilter.DEACTIVATED_MESSAGE;
+    static final String STUDENT_DEACTIVATED = "Student account is deactivated";
 
     private final StudentRepository studentRepository;
     private final TeacherRepository teacherRepository;
@@ -56,8 +59,9 @@ public class AuthService {
     }
 
     /**
-     * Un alumno sin vinculo activo (dado de baja) no entra, con el mismo mensaje que un PIN errado
-     * para no revelar el motivo. Un login correcto marca el "ultimo acceso" de todos sus vinculos activos.
+     * Un alumno sin vinculo activo (dado de baja, o cuyos docentes estan dados de baja) no entra. Solo si el
+     * PIN es correcto se le dice que la cuenta esta desactivada; un PIN errado o un alias desconocido reciben
+     * el mensaje generico. Un login correcto marca el "ultimo acceso" de todos sus vinculos activos.
      */
     @Transactional
     public AuthResponse loginStudent(StudentLoginRequest request) {
@@ -67,7 +71,7 @@ public class AuthService {
         }
         List<TeacherStudentLink> activeLinks = linkRepository.findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(student.getId());
         if (activeLinks.isEmpty()) {
-            throw new UnauthorizedException(INVALID_STUDENT);
+            throw new UnauthorizedException(STUDENT_DEACTIVATED);
         }
         activeLinks.forEach(TeacherStudentLink::registerAccess);
         return tokenService.issue(student.getId(), UserRole.STUDENT);
@@ -76,9 +80,12 @@ public class AuthService {
     @Transactional(readOnly = true)
     public AuthResponse loginTeacher(TeacherLoginRequest request) {
         var teacher = teacherRepository.findByEmailIgnoreCase(request.email().trim()).orElse(null);
-        if (teacher == null || !passwordEncoder.matches(request.password(), teacher.getPasswordHash())
-                || teacher.isDeactivated()) {
+        if (teacher == null || !passwordEncoder.matches(request.password(), teacher.getPasswordHash())) {
             throw new UnauthorizedException(INVALID_TEACHER);
+        }
+        // Con la contrasena correcta si se revela que la cuenta esta dada de baja.
+        if (teacher.isDeactivated()) {
+            throw new UnauthorizedException(TEACHER_DEACTIVATED);
         }
         return issueTeacher(teacher);
     }
@@ -100,9 +107,12 @@ public class AuthService {
                 // El investigador no guarda nombre: el portal usa el derivado del correo.
             return tokenService.issue(researcher.get().getId(), UserRole.RESEARCHER, false, null);
         }
-        // Un docente dado de baja no entra, con el mismo mensaje que una contrasena errada.
-        if (teacher.isPresent() && teacherMatches && !teacher.get().isDeactivated()) {
-                return issueTeacher(teacher.get());
+        // Un docente dado de baja no entra; solo con la contrasena correcta se le dice el motivo.
+        if (teacher.isPresent() && teacherMatches) {
+            if (teacher.get().isDeactivated()) {
+                throw new UnauthorizedException(TEACHER_DEACTIVATED);
+            }
+            return issueTeacher(teacher.get());
         }
         throw new UnauthorizedException(INVALID_STAFF);
     }

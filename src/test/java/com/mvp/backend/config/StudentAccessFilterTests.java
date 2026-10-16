@@ -80,10 +80,10 @@ class StudentAccessFilterTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"texto_original\":\"ola\"}"))
                 .andExpect(status().isUnauthorized());
-        // Mismo mensaje que un PIN errado: no se revela el motivo.
+        // Con el PIN correcto se explica el motivo; con uno errado, el mensaje generico.
         mockMvc.perform(studentLogin(alias, "1234"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.message").value("Invalid student credentials"));
+                .andExpect(jsonPath("$.message").value("Student account is deactivated"));
         mockMvc.perform(studentLogin(alias, "9999"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("Invalid student credentials"));

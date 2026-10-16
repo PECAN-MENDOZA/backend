@@ -81,8 +81,11 @@ class ReportServiceTests {
         assertThat(document.title()).isEqualTo("Reporte del periodo");
         assertThat(document.studentName()).isEqualTo("Ana Pérez");
         assertThat(document.studentAlias()).isEqualTo("ana01");
+        assertThat(document.classroomName()).isEqualTo("3.º B");
+        assertThat(document.classroomArchived()).isFalse();
         assertThat(document.teacherName()).isEqualTo("sofia.garcia");
-        assertThat(document.periodLabel()).isEqualTo("2026-09-10 – 2026-09-17");
+        // Fechas para leer en dd/mm/aaaa; from/to siguen en ISO.
+        assertThat(document.periodLabel()).isEqualTo("10/09/2026 – 17/09/2026");
         assertThat(document.from()).isEqualTo(FROM);
         assertThat(document.to()).isEqualTo(TO);
         assertThat(document.generatedAt()).isEqualTo(clock.instant());
@@ -121,7 +124,7 @@ class ReportServiceTests {
         assertThat(download.filename()).isEqualTo("reporte-ana01-2026-09-18_2026-09-18.pdf");
         ArgumentCaptor<ReportPdfDocument> captor = ArgumentCaptor.forClass(ReportPdfDocument.class);
         verify(pdfGenerator).generate(captor.capture());
-        assertThat(captor.getValue().periodLabel()).isEqualTo("2026-09-18");
+        assertThat(captor.getValue().periodLabel()).isEqualTo("18/09/2026");
         assertThat(captor.getValue().errorTypes()).isEmpty();
         assertThat(captor.getValue().writings()).isEmpty();
     }
@@ -146,6 +149,39 @@ class ReportServiceTests {
         ArgumentCaptor<ReportPdfDocument> captor = ArgumentCaptor.forClass(ReportPdfDocument.class);
         verify(pdfGenerator).generate(captor.capture());
         assertThat(captor.getValue().teacherName()).isEqualTo("Ana QA Torres");
+    }
+
+    @Test
+    void archivedClassroomIsFlaggedAndFilenameUsesTheSanitizedAlias() {
+        Student odd = new Student("Tigre Ñandú/07", "Colegio", "hash");
+        Classroom archived = new Classroom(teacher, "5.º A");
+        archived.archive();
+        TeacherStudentLink oddLink = new TeacherStudentLink(teacher, odd, archived, "enc", null);
+        when(access.link(teacherId, odd.getId())).thenReturn(oddLink);
+        when(access.realName(oddLink)).thenReturn("Tigre");
+        when(insights.help(teacherId, odd.getId(), FROM, TO))
+                .thenReturn(new StudentHelpResponse(odd.getId(), FROM, TO, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        when(insights.errors(teacherId, odd.getId(), FROM, TO)).thenReturn(
+                new StudentErrorsResponse(odd.getId(), FROM, TO, 0, List.of(), List.of()));
+        when(insights.writings(teacherId, odd.getId(), FROM, TO, 20)).thenReturn(List.of());
+        when(pdfGenerator.generate(any(ReportPdfDocument.class))).thenReturn(new byte[] {1});
+        ReportService service = new ReportService(access, insights, pdfGenerator, clock);
+
+        ReportPdfDownload download = service.downloadPdf(teacherId, odd.getId(), FROM, TO);
+
+        assertThat(download.filename()).isEqualTo("reporte-tigre-nandu-07-2026-09-10_2026-09-17.pdf");
+        ArgumentCaptor<ReportPdfDocument> captor = ArgumentCaptor.forClass(ReportPdfDocument.class);
+        verify(pdfGenerator).generate(captor.capture());
+        assertThat(captor.getValue().classroomName()).isEqualTo("5.º A");
+        assertThat(captor.getValue().classroomArchived()).isTrue();
+    }
+
+    @Test
+    void fileSafeAliasKeepsOnlyLowercaseLettersDigitsUnderscoreAndDash() {
+        assertThat(ReportService.fileSafe("alumno_01")).isEqualTo("alumno_01");
+        assertThat(ReportService.fileSafe("Tren-Azul")).isEqualTo("tren-azul");
+        assertThat(ReportService.fileSafe("..José..")).isEqualTo("jose");
+        assertThat(ReportService.fileSafe("???")).isEqualTo("alumno");
     }
 
     @Test

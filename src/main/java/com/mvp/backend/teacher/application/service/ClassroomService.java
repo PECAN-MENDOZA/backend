@@ -33,6 +33,8 @@ import com.mvp.backend.teacher.domain.repository.TeacherStudentLinkRepository;
 @Service
 public class ClassroomService {
 
+    static final String NAME_IN_USE = "Classroom name is already in use";
+
     private final TeacherRepository teacherRepository;
     private final ClassroomRepository classroomRepository;
     private final StudentRepository studentRepository;
@@ -63,8 +65,8 @@ public class ClassroomService {
         Teacher teacher = teacherRepository.findById(teacherId)
                 .orElseThrow(() -> new NotFoundException("Teacher not found"));
         String name = request.name().trim();
-        if (classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, name)) {
-            throw new ConflictException("Classroom name is already in use");
+        if (classroomRepository.existsByTeacherIdAndNameIgnoreCaseAndArchivedAtIsNull(teacherId, name)) {
+            throw new ConflictException(NAME_IN_USE);
         }
         Classroom saved = classroomRepository.save(new Classroom(teacher, name));
         return toResponse(saved, 0);
@@ -86,9 +88,10 @@ public class ClassroomService {
                 throw new BusinessException("Classroom name cannot be blank");
             }
             // Un salon archivado no compite por el nombre; si vuelve a activarse se valida al desarchivar.
+            // Sin distinguir mayusculas y sin contar al propio salon (corregir "5.º a" a "5.º A" es valido).
             if (!name.equals(classroom.getName()) && !classroom.isArchived()
-                    && classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(teacherId, name)) {
-                throw new ConflictException("Classroom name is already in use");
+                    && nameTakenByOtherActive(teacherId, name, classroomId)) {
+                throw new ConflictException(NAME_IN_USE);
             }
             classroom.rename(name);
         }
@@ -96,9 +99,8 @@ public class ClassroomService {
             if (request.archived()) {
                 classroom.archive();
             } else {
-                if (classroom.isArchived() && classroomRepository.existsByTeacherIdAndNameAndArchivedAtIsNull(
-                        teacherId, classroom.getName())) {
-                    throw new ConflictException("Classroom name is already in use");
+                if (classroom.isArchived() && nameTakenByOtherActive(teacherId, classroom.getName(), classroomId)) {
+                    throw new ConflictException(NAME_IN_USE);
                 }
                 classroom.unarchive();
             }
@@ -146,6 +148,11 @@ public class ClassroomService {
             created.add(createStudent(classroom, realName, named ? request.notes() : null, username, request.pin()));
         }
         return created;
+    }
+
+    private boolean nameTakenByOtherActive(UUID teacherId, String name, UUID classroomId) {
+        return classroomRepository.existsByTeacherIdAndNameIgnoreCaseAndArchivedAtIsNullAndIdNot(
+                teacherId, name, classroomId);
     }
 
     private static String sequentialUsername(String prefix, int number) {

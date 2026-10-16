@@ -36,7 +36,11 @@ public class SimplePdfGenerator {
     private static final DateTimeFormatter GENERATED_AT =
             DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(Period.ZONE);
 
-    private static final Color INK = new Color(37, 49, 63);
+    // Alto aproximado de un titulo de seccion (interlineado + espacios) y del salto que lo precede.
+    private static final float SECTION_HEIGHT = 40;
+    private static final float SECTION_GAP = 18;
+
+    private static final Color INK =new Color(37, 49, 63);
     private static final Color MUTED = new Color(105, 123, 140);
     private static final Color BORDER = new Color(219, 229, 239);
     private static final Color PANEL = new Color(247, 250, 255);
@@ -60,28 +64,44 @@ public class SimplePdfGenerator {
 
             pdf.add(firstPageSpacer());
             pdf.add(identityCard(document));
-            pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Ayuda del teclado"));
-            pdf.add(helpCards(document.help()));
-            pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Errores por tipo"));
-            pdf.add(errorTypesTable(document.errorTypes()));
-            pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Palabras para practicar"));
-            pdf.add(practiceWordsTable(document.practiceWords()));
-            pdf.add(Chunk.NEWLINE);
-            pdf.add(sectionTitle("Últimas escrituras"));
-            pdf.add(writingsTable(document.writings()));
+            addSection(pdf, writer, "Ayuda del teclado", helpCards(document.help()));
+            addSection(pdf, writer, "Errores por tipo", errorTypesTable(document.errorTypes()));
+            addSection(pdf, writer, "Palabras para practicar", practiceWordsTable(document.practiceWords()));
+            addSection(pdf, writer, "Últimas escrituras", writingsTable(document.writings()));
             if (document.teacherNotes() != null && !document.teacherNotes().isBlank()) {
-                pdf.add(Chunk.NEWLINE);
-                pdf.add(sectionTitle("Notas del docente"));
-                pdf.add(notesBlock(document.teacherNotes()));
+                addSection(pdf, writer, "Notas del docente", notesBlock(document.teacherNotes()));
             }
             pdf.close();
             return output.toByteArray();
         } catch (Exception exception) {
             throw new PdfGenerationException("Failed to generate PDF report", exception);
         }
+    }
+
+    /**
+     * Titulo de seccion y su contenido. Si al pie de la pagina no caben el titulo y la primera fila del
+     * contenido (encabezado de la tabla + primera fila), se salta de pagina para que el titulo no quede huerfano.
+     */
+    private void addSection(Document pdf, PdfWriter writer, String title, PdfPTable content) {
+        float needed = SECTION_HEIGHT + firstRowsHeight(pdf, content);
+        if (writer.getVerticalPosition(true) - pdf.bottom() < SECTION_GAP + needed) {
+            pdf.newPage();
+        } else {
+            pdf.add(Chunk.NEWLINE);
+        }
+        pdf.add(sectionTitle(title));
+        pdf.add(content);
+    }
+
+    /** Alto del encabezado de la tabla y su primera fila; acotado para bloques mas altos que media pagina. */
+    private static float firstRowsHeight(Document pdf, PdfPTable table) {
+        table.setTotalWidth(pdf.right() - pdf.left());
+        int rows = Math.min(table.getHeaderRows() + 1, table.size());
+        float height = 0;
+        for (int i = 0; i < rows; i++) {
+            height += table.getRowHeight(i);
+        }
+        return Math.min(height, (pdf.top() - pdf.bottom()) / 2);
     }
 
     private Paragraph firstPageSpacer() {
@@ -99,6 +119,7 @@ public class SimplePdfGenerator {
         left.addElement(labelParagraph("Estudiante"));
         left.addElement(valueParagraph(document.studentName(), 15));
         left.addElement(detailParagraph("Alias: " + document.studentAlias()));
+        left.addElement(detailParagraph(classroomLine(document)));
         left.setPadding(18);
 
         PdfPCell right = panelCell(PANEL);
@@ -111,6 +132,10 @@ public class SimplePdfGenerator {
         table.addCell(left);
         table.addCell(right);
         return table;
+    }
+
+    static String classroomLine(ReportPdfDocument document) {
+        return "Salón: " + document.classroomName() + (document.classroomArchived() ? " (archivado)" : "");
     }
 
     /** Conteo por desenlace de las correcciones pedidas en el periodo. */
@@ -313,7 +338,7 @@ public class SimplePdfGenerator {
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_RIGHT,
                     new Phrase("Página " + writer.getPageNumber(), FOOTER_FONT), pageWidth - 42, 18, 0);
             ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                    new Phrase(document.from() + "_" + document.to() + " - " + document.studentAlias(), SMALL_FONT),
+                    new Phrase(document.periodLabel() + " - " + document.studentAlias(), SMALL_FONT),
                     42, 6, 0);
         }
     }

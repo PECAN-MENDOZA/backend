@@ -9,6 +9,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,6 +79,41 @@ class ClassroomAuthorizationTests {
         mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", classroomId).with(teacher(teacherId))
                 .contentType(MediaType.APPLICATION_JSON).content("{\"archived\":false}"))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void classroomNamesAreUniqueIgnoringCaseOnCreateRenameAndRestore() throws Exception {
+        // Crear: "3.º b" choca con el activo "3.º B".
+        mockMvc.perform(post("/api/v1/teachers/classrooms").with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"3.º b\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Classroom name is already in use"));
+
+        // Renombrar otro salon a "3.º b" tambien choca; corregir las mayusculas del propio salon no.
+        String otherId = JsonPath.read(mockMvc.perform(post("/api/v1/teachers/classrooms").with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"4.º A\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", otherId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"3.º b\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Classroom name is already in use"));
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", classroomId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"3.º b\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("3.º b"));
+
+        // Desarchivar: el archivado "4.º a" choca con un activo "4.º A" creado despues.
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", otherId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"4.º a\",\"archived\":true}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/teachers/classrooms").with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"4.º A\"}"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(patch("/api/v1/teachers/classrooms/{id}", otherId).with(teacher(teacherId))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"archived\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Classroom name is already in use"));
     }
 
     @Test

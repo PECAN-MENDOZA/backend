@@ -190,15 +190,50 @@ class AuthServiceTests {
     }
 
     @Test
-    void studentWithoutActiveLinkCannotLogInWithTheSameMessageAsAWrongPin() {
+    void studentWithoutActiveLinkIsToldTheAccountIsDeactivatedOnlyWithTheRightPin() {
         var student = new Student("tigre-07", "School", "pin-hash");
         when(studentRepository.findByUsernameIgnoreCase("tigre-07")).thenReturn(Optional.of(student));
         when(passwordEncoder.matches("1234", "pin-hash")).thenReturn(true);
+        when(passwordEncoder.matches("9999", "pin-hash")).thenReturn(false);
         when(linkRepository.findByStudentIdAndDeletedAtIsNullAndTeacherDeactivatedAtIsNull(student.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "1234")))
                 .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Student account is deactivated");
+        assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("tigre-07", "9999")))
+                .isInstanceOf(UnauthorizedException.class)
                 .hasMessage("Invalid student credentials");
+        assertThatThrownBy(() -> authService.loginStudent(new StudentLoginRequest("nadie-01", "1234")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid student credentials");
+    }
+
+    @Test
+    void deactivatedTeacherIsToldOnlyWithTheRightPasswordAndStaffLoginKeepsTwoComparisons() {
+        var teacher = new Teacher("ana", "ana@x.edu", null, "School", "teacher-hash");
+        teacher.deactivate();
+        when(researcherRepository.findByEmailIgnoreCase("ana@x.edu")).thenReturn(Optional.empty());
+        when(teacherRepository.findByEmailIgnoreCase("ana@x.edu")).thenReturn(Optional.of(teacher));
+        when(passwordEncoder.matches("Right123", "teacher-hash")).thenReturn(true);
+        when(passwordEncoder.matches("Wrong123", "teacher-hash")).thenReturn(false);
+        when(passwordEncoder.matches("Right123", "encoded-password")).thenReturn(false); // lado investigador ficticio
+        when(passwordEncoder.matches("Wrong123", "encoded-password")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("ana@x.edu", "Right123")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Teacher account is deactivated");
+        assertThatThrownBy(() -> authService.loginStaff(new StaffLoginRequest("ana@x.edu", "Wrong123")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid staff credentials");
+        assertThatThrownBy(() -> authService.loginTeacher(new TeacherLoginRequest("ana@x.edu", "Right123")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Teacher account is deactivated");
+        assertThatThrownBy(() -> authService.loginTeacher(new TeacherLoginRequest("ana@x.edu", "Wrong123")))
+                .isInstanceOf(UnauthorizedException.class)
+                .hasMessage("Invalid teacher credentials");
+        // Login de staff: real del docente + ficticia del investigador (2); loginTeacher: 1.
+        verify(passwordEncoder, times(3)).matches(eq("Right123"), anyString());
+        verify(passwordEncoder).matches("Right123", "encoded-password");
     }
 
     @Test

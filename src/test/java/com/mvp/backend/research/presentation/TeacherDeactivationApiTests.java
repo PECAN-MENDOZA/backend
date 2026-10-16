@@ -79,12 +79,20 @@ class TeacherDeactivationApiTests {
                 .andExpect(status().isConflict());
 
         // Ni login ni sesion abierta para el docente.
-        mockMvc.perform(staffLogin(email, "Docente2026")).andExpect(status().isUnauthorized());
+        mockMvc.perform(staffLogin(email, "Docente2026"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Teacher account is deactivated"));
+        // Con la contrasena errada no se revela que la cuenta esta dada de baja.
+        mockMvc.perform(staffLogin(email, "Otra2026x"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Invalid staff credentials"));
         mockMvc.perform(get("/api/v1/teachers/classrooms").with(teacher()))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("Teacher account is deactivated"));
         // Ni login ni sesion abierta para sus alumnos.
-        mockMvc.perform(studentLogin()).andExpect(status().isUnauthorized());
+        mockMvc.perform(studentLogin())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Student account is deactivated"));
         mockMvc.perform(get("/api/v1/students/me").with(student())).andExpect(status().isUnauthorized());
         // El directorio lo marca y no se le puede reiniciar la contrasena.
         mockMvc.perform(get("/api/v1/research/classrooms").with(researcher()))
@@ -99,6 +107,20 @@ class TeacherDeactivationApiTests {
                 .andExpect(status().isConflict());
         mockMvc.perform(staffLogin(email, "Docente2026")).andExpect(status().isOk());
         mockMvc.perform(studentLogin()).andExpect(status().isOk());
+    }
+
+    @Test
+    void teacherListCountsOnlyActiveClassrooms() throws Exception {
+        Teacher teacher = teacherRepository.findById(teacherId).orElseThrow();
+        Classroom archived = new Classroom(teacher, "Antiguo");
+        archived.archive();
+        classroomRepository.save(archived);
+
+        mockMvc.perform(get(TEACHERS).with(researcher()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id=='" + teacherId + "')].classroomCount").value(1));
+        mockMvc.perform(post(TEACHERS + "/{id}/deactivate", teacherId).with(researcher()))
+                .andExpect(jsonPath("$.classroomCount").value(1));
     }
 
     @Test

@@ -85,17 +85,7 @@ public class ResearchTeacherService {
     @Transactional(readOnly = true)
     public List<TeacherSummaryResponse> listTeachers() {
         return teacherRepository.findAllByOrderByCreatedAtAsc().stream()
-                .map(teacher -> new TeacherSummaryResponse(
-                        teacher.getId(),
-                        teacher.getUsername(),
-                        teacher.getFullName(),
-                        teacher.getEmail(),
-                        teacher.getInstitution(),
-                        teacher.getCreatedAt(),
-                        teacher.isMustChangePassword(),
-                        classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacher.getId()).size(),
-                        linkRepository.countByTeacherIdAndDeletedAtIsNull(teacher.getId()),
-                        teacher.getDeactivatedAt()))
+                .map(this::summary)
                 .toList();
     }
 
@@ -134,7 +124,8 @@ public class ResearchTeacherService {
                 teacher.getInstitution(),
                 teacher.getCreatedAt(),
                 teacher.isMustChangePassword(),
-                classroomRepository.findByTeacherIdOrderByArchivedAtAscCreatedAtAsc(teacher.getId()).size(),
+                // Solo salones activos: los archivados no cuentan en el directorio.
+                classroomRepository.countByTeacherIdAndArchivedAtIsNull(teacher.getId()),
                 linkRepository.countByTeacherIdAndDeletedAtIsNull(teacher.getId()),
                 teacher.getDeactivatedAt());
     }

@@ -8,7 +8,10 @@ public record ReportPdfDocument(
         String title,
         String studentName,
         String studentAlias,
+        String classroomName,
+        boolean classroomArchived,
         String teacherName,
+        // Fechas para leer (dd/mm/aaaa); from/to quedan en ISO para el nombre del archivo.
         String periodLabel,
         String from,
         String to,

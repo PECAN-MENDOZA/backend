@@ -324,7 +324,7 @@ public class SimplePdfGenerator {
                         new Phrase(document.title(), FontFactory.getFont(FontFactory.HELVETICA_BOLD, 24, INK)),
                         42, pageHeight - 72, 0);
                 ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
-                        new Phrase("Qué escribió el alumno, en qué se equivocó y qué hizo con la ayuda",
+                        new Phrase("Qué escribió el estudiante, en qué se equivocó y qué hizo con la ayuda",
                                 FontFactory.getFont(FontFactory.HELVETICA, 11, MUTED)),
                         42, pageHeight - 96, 0);
                 ColumnText.showTextAligned(writer.getDirectContent(), Element.ALIGN_LEFT,
